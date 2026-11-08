@@ -223,6 +223,12 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 
 **LTO (link-time optimization).** A compiler mode that optimizes across files. Turned off for benchmarks, because it could inline the snippet into the loop and measure something else.
 
+**Aliasing.** Two pointers that may point at the same memory. A store through a byte pointer may change anything, so the compiler must read other values back from memory after it, for example a size kept in a struct.
+
+**Auto-vectorization.** The compiler rewriting a loop to handle 16 or 32 bytes per step with vector instructions. A "byte at a time" loop is often not one after `-O3`; `bench_memcpy.c` turns it off for its byte loop.
+
+**Store-to-load forwarding.** When a load reads bytes that a recent store has not yet written to the cache, the CPU passes them straight from the store. It costs a few cycles (about 4 to 5 on recent Intel cores) and is part of a chain that reads back what it just wrote.
+
 **Environment check.** At startup (and, for the SMT sibling, at the end) the runner looks at the machine: governor, turbo, sibling load, core isolation, core type, PMU, page size, build. Findings go into the `env` record; problems warn, or fail the run under the `ci` profile.
 
 **Profile.** How strict the run is about the machine: `dev` (default) warns about problems and finishes with exit 0; `ci` also exits 1, so a badly set-up CI runner cannot pass.

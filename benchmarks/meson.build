@@ -42,6 +42,21 @@ benchmark('crc32', bm_crc32,
   timeout: 1800,
   protocol: 'exitcode')
 
+bm_memcpy = executable('bm_memcpy', 'bench_memcpy.c',
+  dependencies: [bm_dep, project_deps],
+  override_options: ['b_lto=false'],
+  build_by_default: false)
+
+benchmark('memcpy', bm_memcpy,
+  args: ['-l', '2,3', '--no-huge', '--no-pci', '--no-telemetry',
+         '--',
+         '--out=' + meson.current_build_dir() / 'memcpy.jsonl',
+         '--profile=dev',
+         '--seed=1'],
+  suite: 'bench',
+  timeout: 1800,
+  protocol: 'exitcode')
+
 # Regression checks against the baselines in baseline/, taken on the CI
 # runner. Run them after the benchmarks, as a separate command:
 #   meson test -C build --benchmark --test-args='--profile=ci'
@@ -53,6 +68,15 @@ test('regress-crc32', python3,
   args: [bm_compare,
          meson.current_source_dir() / 'baseline' / 'crc32.jsonl',
          meson.current_build_dir() / 'crc32.jsonl',
+         '--threshold=3'],
+  env: ['PYTHONDONTWRITEBYTECODE=1'],
+  suite: 'bench-regression',
+  is_parallel: false)
+
+test('regress-memcpy', python3,
+  args: [bm_compare,
+         meson.current_source_dir() / 'baseline' / 'memcpy.jsonl',
+         meson.current_build_dir() / 'memcpy.jsonl',
          '--threshold=3'],
   env: ['PYTHONDONTWRITEBYTECODE=1'],
   suite: 'bench-regression',

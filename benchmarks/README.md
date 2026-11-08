@@ -187,6 +187,22 @@ Make the corpus deterministic from `seed`, so runs reproduce. Do not call the C 
 
 **Make all implementations agree.** They read the same corpus and should return the same values. The framework does not check this; a quick self-check in a unit test catches an implementation that is fast because it is wrong.
 
+### Specific to memcpy: copy benchmarks
+
+These traps apply when you benchmark `memcpy` or a hand-written copy loop, as in `benchmarks/bench_memcpy.c` (libc `memcpy` against a byte-by-byte loop, 16 to 1024 bytes, both modes). They are not general rules for other snippets.
+
+**A fixed-size `memcpy` is not a libc call.** With a size the compiler can see, such as `memcpy(dst, src, 64)`, it writes the copy itself as a few vector moves, so you measure the compiler, not libc. Keep the size in `state` (set in `setup`), so it is only known at run time; then the snippet calls libc's `memcpy`.
+
+**GCC turns a byte loop into `memcpy`.** At `-O3` (`buildtype=release`), GCC recognizes `for (i = 0; i < n; i++) d[i] = s[i];` and replaces it with a call to `memcpy`, so both implementations measure the same code. Turn that off on the loop's function with `__attribute__((optimize("no-tree-loop-distribute-patterns")))`.
+
+**GCC vectorizes a byte loop.** Even without the `memcpy` call, `-O3` copies 16 or 32 bytes per step. If "naive" means one byte at a time, also add `"no-tree-vectorize"` to the attribute. Clang ignores this GCC attribute (and says so), so under clang check the code again.
+
+**Copy the destination and size into locals.** A byte store may write to any memory, including the state struct, so a loop over `st->dst[i]` and `st->n` reads both back from memory on every byte. Measured: that made the byte loop about 40% slower than the same loop with locals. Read `st->dst` and `st->n` into local variables before the loop.
+
+**Return a byte of the copy, not the size.** The copy's result is a store. Returning `st->n` gives the runner a value that does not depend on the copy, and in chained mode the next call then does not wait for the copy: calls overlap, and the result is throughput under a chained name. Return the last copied byte, `d[n - 1]`, and use an adapter like `crc_next`. The chained result is then the time until the copied data can be read, including the store-to-load forwarding of that last byte (about 4 to 5 cycles).
+
+Check the result in the disassembly (`objdump -d build/benchmarks/bm_memcpy`): the libc version should contain `call memcpy@plt`, and the byte loop one byte load and one byte store per step.
+
 ## Sizing the corpus
 
 The corpus size decides what you measure:
@@ -207,7 +223,7 @@ The runner calls the snippet on items `0, 1, 2, ...` (wrapping at `count`), back
 
 Use it for code that runs in a loop over independent inputs: hashing a burst of packets, parsing a batch of headers.
 
-**The floor.** The harness itself (the indirect call, return, loop, index and load) costs about 5 cycles per call on a recent Intel core. A snippet cheaper than that reads as the floor. The calibration at startup measures this floor, and an implementation whose median is within 3% (plus half a cycle) of it is marked `harness_bound` in its `bench` record and in the console line:
+**The floor.** The harness itself (the indirect call, return, loop, index and load) costs about 5 cycles per call on a recent Intel core. A snippet cheaper than that reads as the floor. The calibration at startup measures this floor, and an implementation whose median is below it or within 3% (plus half a cycle) above it is marked `harness_bound` in its `bench` record and in the console line:
 
 ```
 Ref/throughput/nop: N=617225, 5.01 cycles/call, harness-bound
@@ -257,7 +273,9 @@ static const flw_impl crc_impls[] = {
 
 **Harness cost.** The runner subtracts the calibrated glue latency `a` (about 2 cycles on a recent Intel core) from chained results. Word in/out uses the startup calibration. Each adapter implementation is calibrated separately through its own `next` before its epochs (about 0.1 s), since `next` is part of the glue. The pointer is not read during that calibration, so loads in your snippet stay in its result.
 
-**Floor.** Below a certain latency the harness hides the chain; the floor is about 8 cycles per call for word in/out on Kaby Lake (14 through a simple adapter). A raw result below it is marked `harness_bound`, and its corrected value means nothing. Use `ops_per_call` to measure such snippets.
+**Floor.** Below a certain latency the harness hides the chain; the floor is about 8 cycles per call for word in/out on Kaby Lake (14 through a simple adapter). A raw result below the floor by more than 3% (plus half a cycle) is marked `harness_bound`, and its corrected value means nothing. Use `ops_per_call` to measure such snippets.
+
+The rule differs from throughput mode on purpose. The throughput floor is what an empty snippet reads, so a result at it could be anything cheaper and is marked. The chained floor is the shortest calibration chain that still measures right, so a result at it is a real measurement; only below it does the harness hide the chain.
 
 **Collapse check.** Through an adapter, a chain can collapse: if `next` ends up returning the same few pointers, the snippet sees the same inputs over and over and the numbers are fake. Before timing, the runner makes 65,536 untimed calls through the adapter and counts the distinct pointers. Fewer than `min(count, 65536) / 16` fails the implementation:
 
@@ -419,7 +437,7 @@ The JSONL file has one record per line, in this order:
 | `bench` | one per implementation and mode: name, mode, batch size `iters`, `ops_per_call`, epochs, samples, corpus size, the harness cost `a` and `floor` that apply, `subtract`, `harness_bound`; for adapters also their own calibration (`adapter`) |
 | `sample` | one per batch, after its `bench` record: `epoch`, `batch`, `iters`, `tsc`, `cycles`, `instr`, `flags` |
 
-Samples are raw: cycles per call is `cycles / iters`. A sample whose `flags` is not 0 was rejected: 1 `ratio` (the core's frequency changed, or an interrupt took time), 2 `ctx` (the thread was switched out), 4 `migrate` (it moved to another CPU). Rejected samples stay in the file but are left out of results; the console line says `(x of y samples rejected)`, and more than 10% rejected gives a warning. Lots of `ratio` rejections usually mean the governor is not `performance` or turbo is on. Per op is `(per_call - a) / ops_per_call` when the `bench` record says `subtract`, else `per_call / ops_per_call`; work on per-call values first (medians, the floor) and divide last. Read `cycles` (core cycles) rather than `tsc` (reference ticks, which move with the CPU frequency). In TSC-only mode `cycles` and `instr` are absent.
+Samples are raw: cycles per call is `cycles / iters`. A sample whose `flags` is not 0 was rejected: 1 `ratio` (the core's frequency changed, or an interrupt took time), 2 `ctx` (the thread was switched out), 4 `migrate` (it moved to another CPU). Rejected samples stay in the file but are left out of results; the console line says `(x of y samples rejected)`, and more than 10% rejected gives a warning. Lots of `ratio` rejections usually mean the governor is not `performance` or turbo is on; see [Rejected samples and layout sensitivity](#rejected-samples-and-layout-sensitivity). Per op is `(per_call - a) / ops_per_call` when the `bench` record says `subtract`, else `per_call / ops_per_call`; work on per-call values first (medians, the floor) and divide last. Read `cycles` (core cycles) rather than `tsc` (reference ticks, which move with the CPU frequency). In TSC-only mode `cycles` and `instr` are absent.
 
 To read a file, use `tools/bm-report`:
 
@@ -427,7 +445,7 @@ To read a file, use `tools/bm-report`:
 tools/bm-report build/benchmarks/crc32.jsonl
 ```
 
-It prints the environment, every warning, the calibration, then one line per implementation: the median of epoch medians per call with its 95% confidence interval, raw and corrected per op, kept and rejected samples, and notes (`HARNESS-BOUND`, `harness-bound uncertain`, `layout-sensitive` when epochs disagree much more than batches within an epoch).
+It prints the environment, every warning, the calibration, then one line per implementation: the median of epoch medians per call with its 95% confidence interval, raw and corrected per op, kept and rejected samples, and notes (`HARNESS-BOUND`, `harness-bound uncertain`, `layout-sensitive` when epochs disagree much more than batches within an epoch; see [below](#rejected-samples-and-layout-sensitivity)).
 
 `tools/bm-go file.jsonl` prints the kept samples in Go benchmark format, for `benchstat`:
 
@@ -459,6 +477,24 @@ warning: calibration uncertain (chained mode), interference on the core:
 ```
 
 Calibration times each reference 3 times and keeps the fastest; this warning means the next-fastest timings give a different answer. The results it affects say so in their console line (`5.97/op corrected +- 0.68 (calibration uncertain), harness-bound uncertain (floor 8.00 or 26.27)`) and in their `bench` record (`a_alt`, `floor_alt`, `harness_bound_uncertain`). Results outside the risky range are not affected. Quiet the machine and run again to remove the doubt.
+
+### Rejected samples and layout sensitivity
+
+**How a sample gets rejected.** The runner checks every batch for three kinds of disturbance, from what the hardware and the OS report, not by throwing out numbers that look odd:
+
+| Flag | Check | Catches |
+| --- | --- | --- |
+| `ratio` (1) | core cycles ÷ TSC ticks of the batch is more than 2% from the median of its epoch | the frequency changed during the batch, or an interrupt ran (its time counts in TSC ticks but not in core cycles, so the ratio drops) |
+| `ctx` (2) | the thread's context-switch count went up during the batch | the OS gave the core to another task |
+| `migrate` (4) | the CPU number before and after the batch differ | the thread moved to another CPU (it is pinned, so this should not happen) |
+
+On an undisturbed batch the ratio of core cycles to TSC ticks stays the same, because the TSC ticks at a fixed rate and the core at its own; a change means something happened. The `ratio` check needs core cycles, so in TSC-only mode (no PMU access) it does not run. A batch can carry several flags.
+
+**What to make of it.** Kept samples can be trusted even when many were rejected: on a laptop, a busy loop on the benchmark core rejected about a third of the samples, and the kept ones gave the same result as a quiet run within 0.1%. A high rejection rate says the machine is noisy, not that the result is wrong. Rejections that are almost all `ratio` mean frequency steps: set the `performance` governor and turn turbo off (see [Machine setup](#machine-setup)). Many `ctx` mean other tasks on the core: isolate it. What rejection cannot catch is a busy SMT sibling, which slows the benchmark without moving the ratio; that has its own warning.
+
+**Layout-sensitive.** Each epoch places the corpus at a new address (a random page and cache line), while it stays put for the batches inside the epoch. `bm-report` compares two spreads, each measured as a MAD (median absolute deviation): of the epoch medians, and of the batches within each epoch. When the first is more than 3 times the second, moving the data changed the speed more than noise did, and the result is marked `layout-sensitive`.
+
+The headline is still the median over all placements, so it remains a fair number, but its CI is wider, and one placement of your real code may run faster or slower than it. Usual causes are alignment: a buffer crossing a cache line or page boundary, or two buffers whose addresses share the same low 12 bits (the CPU may then wrongly hold a load back behind a store to the other buffer). If the production code controls its alignment, generate the corpus with the same alignment; otherwise give the median more epochs (`--epochs=20`) and report the spread along with it.
 
 ## Comparing builds
 
