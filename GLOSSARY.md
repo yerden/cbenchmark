@@ -38,13 +38,15 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 
 ### Chained mode details
 
-**Adapter.** For snippets that take a pointer: a small benchmark function `next(out, item)` that turns the previous output and the next corpus item into the pointer the next call reads.
+**Adapter.** An optional benchmark function `next(out, item, state)` for when the previous output really picks the next input (a table walk, a parser's next offset). It turns the previous output, the next corpus item and the implementation's state into the pointer the next call reads. Pointer snippets that just need chaining use the *pointer dependency* instead.
 
 **Collapse.** A chain stuck feeding the snippet the same few inputs again and again (for example a value that becomes 0 and stays 0). The CPU then learns the pattern and the numbers are too good. The runner checks adapters for it before timing.
 
 **Distinct inputs.** The collapse check's measure: how many different pointers `next` returned in 65,536 untimed calls. Too few means collapse.
 
 **Fake dependency.** A trick to chain calls without changing the inputs: the next input is `item | (out & 0)`, where the 0 is hidden from the CPU and the compiler (`flw_zero()`). The value is the corpus item, but the CPU must wait for `out`. Done by `flw_chain_dep()`.
+
+**Pointer dependency.** The runner's chaining for snippets that take a pointer (`fn`) and have no adapter: the fake dependency applied to the corpus item's address. The snippet reads the corpus item unchanged, but the call waits for the previous one. Calibrated once per run (`ref/ptr-*`).
 
 **Word in, word out.** The simple chained shape: the snippet takes a 64-bit number and returns one (`chain`). The runner supplies the first 8 bytes of each corpus item as input.
 
@@ -74,7 +76,7 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 
 ## Harness cost and calibration
 
-**a (intercept).** The harness cost of one chained call, in cycles: call, return, loop and the fake dependency (or adapter). About 2 cycles. In chained mode it is subtracted from results. The name comes from the fitted line `cost = a + 3k`.
+**a (intercept).** The harness cost of one chained call, in cycles: call, return, loop and the fake dependency (on a word or a pointer) or adapter. About 2 cycles. In chained mode it is subtracted from results. The name comes from the fitted line `cost = a + 3k`.
 
 **Calibration.** At startup, the runner times reference snippets of known cost through the same loops as user snippets. This tells it the harness cost (`a`), the floors, and whether the counters work.
 
@@ -101,6 +103,7 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 - `ref/imul-chain-k`: k multiplications, each waiting for the previous; costs 3k cycles (a multiply takes 3 cycles on modern x86).
 - `ref/add-chain-k`: k additions in a chain; k cycles.
 - `ref/imul-indep-s`: s multiplications that do not wait for each other; about s cycles (one multiply per cycle).
+- `ref/ptr-nop`, `ref/ptr-imul-chain-k`: the same, called on a pointer through the pointer dependency.
 - `ref/adapter-nop`, `ref/adapter-imul-chain-k`: the same, called through an implementation's adapter.
 
 **Residual.** How far a calibration point lies from the fitted line.

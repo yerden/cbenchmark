@@ -33,10 +33,14 @@ def env_lines(run):
 def calib_line(run):
     c = run.calibration.get("chained", {})
     t = run.calibration.get("throughput", {})
+    p = run.calibration.get("pointer")
     st = run.selftest
-    return ("calibration: chained a %.2f, floor %.2f; throughput floor %.2f; "
+    ptr = ("; pointer a %.2f, floor %.2f" % (p.get("a", float("nan")),
+                                            p.get("floor", float("nan")))
+           if p else "")
+    return ("calibration: chained a %.2f, floor %.2f%s; throughput floor %.2f; "
             "self-test slope %s, ratio %s, timer %s, confirmed %s" % (
-                c.get("a", float("nan")), c.get("floor", float("nan")),
+                c.get("a", float("nan")), c.get("floor", float("nan")), ptr,
                 t.get("floor", float("nan")), st.get("slope"), st.get("ratio"),
                 st.get("timer"), st.get("confirmed")))
 

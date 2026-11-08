@@ -67,6 +67,10 @@ copy_teardown(void *state)
 	free(st);
 }
 
+/*
+ * Both return the last copied byte, not the size: in chained mode the next
+ * copy then waits until this one is readable.
+ */
 static uint64_t
 copy_libc(const void *in, void *state)
 {
@@ -94,28 +98,16 @@ copy_bytewise(const void *in, void *state)
 	return d[n - 1];
 }
 
-/*
- * chained adapter: the next source is the corpus item, made to depend on the
- * last copied byte, so the next copy waits until the previous one is readable
- */
-static const void *
-copy_next(uint64_t out, const void *item)
-{
-	return (const uint8_t *)item + (out & flw_zero());
-}
-
 static const flw_impl copy_impls[] = {
 	{
 		.name = "memcpy",
 		.fn = copy_libc,
-		.next = copy_next,
 		.setup = copy_setup,
 		.teardown = copy_teardown,
 	},
 	{
 		.name = "bytewise",
 		.fn = copy_bytewise,
-		.next = copy_next,
 		.setup = copy_setup,
 		.teardown = copy_teardown,
 	},
@@ -144,3 +136,4 @@ main(int argc, char **argv)
 {
 	return flw_main(argc, argv);
 }
+

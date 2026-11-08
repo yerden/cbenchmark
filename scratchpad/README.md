@@ -5,7 +5,7 @@ Test benchmarks and analysis scripts used while implementing steps 4 to 10. Not 
 | File | What it shows |
 | --- | --- |
 | `bench_ref.c` | Throughput mode: `nop` (lands on the floor, `harness-bound`) and `imul-indep-s` for s = 4, 16, 32 (about 1.15 to 1.3 cycles per `imul`) |
-| `bench_chain.c` | Chained mode: word in/out `imul` chains k = 1 to 16 (3k after subtracting `a`), `ops_per_call = 8`, two adapter chains, and an adapter that collapses (fails the run, exit 1) |
+| `bench_chain.c` | Chained mode: word in/out `imul` chains k = 1 to 16 (3k after subtracting `a`), `ops_per_call = 8`, two chains on a pointer (pointer dependency), an adapter that walks the corpus through `state`, and an adapter that collapses (fails the run, exit 1) |
 | `bench_plant.c` | A snippet whose work is set at build time with `-DWORK=N`; build with 100 and 105 for a planted slowdown that `bm-compare` must flag |
 | `epochs.py` | Per implementation: median, spread of epoch medians, within-epoch MAD (all samples, also rejected ones) |
 | `permed.py` | Per-epoch medians and cycles/TSC ratios, side by side |

@@ -87,22 +87,11 @@ crc_table(const void *in, void *state)
 	return ~crc;
 }
 
-/*
- * chained adapter: the next buffer is the corpus item, made to depend on
- * the previous CRC (out & 0 is 0, but the CPU must wait for out)
- */
-static const void *
-crc_next(uint64_t out, const void *item)
-{
-	return (const uint8_t *)item + (out & flw_zero());
-}
-
 static const flw_impl crc_impls[] = {
-	{.name = "bitwise", .fn = crc_bitwise, .next = crc_next},
+	{.name = "bitwise", .fn = crc_bitwise},
 	{
 		.name = "table",
 		.fn = crc_table,
-		.next = crc_next,
 		.setup = crc_table_setup,
 		.teardown = free,
 	},

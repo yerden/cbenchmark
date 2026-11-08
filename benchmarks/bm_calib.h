@@ -69,6 +69,11 @@ struct bm_calib {
 	/* the same fits on each point's second-fastest round */
 	struct bm_calib_fit chained_alt, throughput_alt;
 	struct bm_calib_risk chained_risk, throughput_risk;
+	/* chained on a pointer: swept by the first implementation that needs it */
+	int pointer_done;
+	struct bm_calib_point ptr[1 + BM_CALIB_CHAIN];
+	struct bm_calib_fit pointer;
+	struct bm_calib_risk pointer_risk;
 
 	/* self-test; *_ok is 1 pass, 0 fail, -1 skipped (no PMU) */
 	int slope_ok, ratio_ok, timer_ok;
@@ -92,11 +97,13 @@ int bm_calibrate(const struct bm_pmu *pmu, const flw_corpus *c, const struct bm_
 	struct bm_calib *cal);
 
 /*
- * The chained sweep through an implementation's adapter: ref/adapter-nop and
- * ref/adapter-imul-chain-k called on next()'s result. p holds
+ * A chained sweep on a pointer. With next NULL, the runner's pointer
+ * dependency: ref/ptr-nop and ref/ptr-imul-chain-k, once per run. Otherwise
+ * an implementation's adapter: ref/adapter-nop and ref/adapter-imul-chain-k
+ * called on next()'s result, with state passed to next. p holds
  * 1 + BM_CALIB_CHAIN points. Returns -1 if out of memory.
  */
-int bm_calib_adapter(const struct bm_pmu *pmu, const flw_corpus *c, flw_next_fn next,
+int bm_calib_pointer(const struct bm_pmu *pmu, const flw_corpus *c, flw_next_fn next, void *state,
 	const struct bm_calib_opts *o, struct bm_calib_point *p, struct bm_calib_fit *f,
 	struct bm_calib_risk *risk);
 

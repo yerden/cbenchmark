@@ -81,7 +81,7 @@ points_append(json_t *arr, const struct bm_calib_point *p, int np)
 	return arr;
 }
 
-/* the fields both calibration records share */
+/* the fields all calibration records share */
 static json_t *
 calib_common(const struct bm_ctx *ctx, const char *mode, const struct bm_calib_fit *f,
 	const struct bm_calib_risk *risk, json_t *points)
@@ -151,6 +151,15 @@ bm_calib_throughput_record(const struct bm_ctx *ctx)
 
 	return calib_common(ctx, "throughput", &cal->throughput, &cal->throughput_risk,
 		points_append(json_array(), cal->indep, 1 + BM_CALIB_INDEP));
+}
+
+json_t *
+bm_calib_pointer_record(const struct bm_ctx *ctx)
+{
+	const struct bm_calib *cal = &ctx->calib;
+
+	return calib_common(ctx, "pointer", &cal->pointer, &cal->pointer_risk,
+		points_append(json_array(), cal->ptr, 1 + BM_CALIB_CHAIN));
 }
 
 static const char *
@@ -226,7 +235,7 @@ bm_bench_record(const struct bm_ctx *ctx, const struct bm_result *r)
 			"warmup", BM_BENCH_WARMUP,
 			"seed", (json_int_t)ctx->opts.seed,
 			"corpus_bytes", (json_int_t)r->corpus_bytes,
-			"calibration", r->adapter ? "adapter" : "startup",
+			"calibration", r->adapter ? "adapter" : r->pointer ? "pointer" : "startup",
 			"a", r->a,
 			"floor", r->floor,
 			"a_alt", r->risk.a_alt,

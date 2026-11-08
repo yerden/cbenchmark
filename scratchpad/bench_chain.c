@@ -1,5 +1,6 @@
 /* scratch: step 5 acceptance, chained mode through the full glue */
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bench.h"
@@ -24,10 +25,15 @@ gen(flw_corpus *c, uint64_t seed, size_t count, void *arg)
 		__asm__(".rept " #k "\n\timul %1, %0\n\t.endr" : "+r"(x) : "r"(MUL)); \
 		return x;                                                             \
 	}
+/* clang-format off */
 WCHAIN(1)
-WCHAIN(2) WCHAIN(4) WCHAIN(8) WCHAIN(16)
+WCHAIN(2)
+WCHAIN(4)
+WCHAIN(8)
+WCHAIN(16)
+/* clang-format on */
 
-/* adapter: load the item word, then k dependent imul */
+/* on a pointer: load the item word, then k dependent imul */
 #define ACHAIN(k)                                                                     \
 	static uint64_t a_##k(const void *p, void *st)                                \
 	{                                                                             \
@@ -37,18 +43,48 @@ WCHAIN(2) WCHAIN(4) WCHAIN(8) WCHAIN(16)
 		__asm__(".rept " #k "\n\timul %1, %0\n\t.endr" : "+r"(x) : "r"(MUL)); \
 		return x;                                                             \
 	}
-	ACHAIN(4) ACHAIN(16) static const void *next_item(uint64_t out, const void *item)
+/* clang-format off */
+ACHAIN(4)
+ACHAIN(16)
+/* clang-format on */
+
+/* adapter state: the corpus, so next can pick an item by out */
+struct walk {
+	const uint64_t *items;
+	size_t mask;
+};
+
+static void *
+walk_setup(const flw_corpus *c, void *arg)
 {
-	return (const char *)item + (out & flw_zero());
+	struct walk *w = malloc(sizeof(*w));
+
+	(void)arg;
+	if (w != NULL) {
+		w->items = c->items;
+		w->mask = c->count - 1;
+	}
+	return w;
+}
+
+/* a real adapter: out picks the next item */
+static const void *
+next_walk(uint64_t out, const void *item, void *state)
+{
+	const struct walk *w = state;
+
+	(void)item;
+	return &w->items[(out >> 32) & w->mask];
 }
 
 /* collapses: ignores the item, the input depends on out alone (and is constant) */
 static uint64_t sink_word;
 
 static const void *
-next_stuck(uint64_t out, const void *item)
+next_stuck(uint64_t out, const void *item, void *state)
 {
 	(void)item;
+	(void)state;
 	return (const char *)&sink_word + (out & flw_zero());
 }
 
@@ -59,8 +95,13 @@ static const flw_impl impls[] = {
 	{.name = "imul-8", .chain = w_8},
 	{.name = "imul-16", .chain = w_16},
 	{.name = "imul-16-R8", .chain = w_16, .ops_per_call = 8},
-	{.name = "adapter-imul-4", .fn = a_4, .next = next_item},
-	{.name = "adapter-imul-16", .fn = a_16, .next = next_item},
+	{.name = "ptr-imul-4", .fn = a_4},
+	{.name = "ptr-imul-16", .fn = a_16},
+	{.name = "adapter-imul-4",
+		.fn = a_4,
+		.next = next_walk,
+		.setup = walk_setup,
+		.teardown = free},
 	{.name = "collapse", .fn = a_4, .next = next_stuck},
 };
 static const flw_bench b = {.name = "Chain",

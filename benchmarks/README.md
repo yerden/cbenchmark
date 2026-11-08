@@ -4,11 +4,11 @@ This guide is for people who write benchmarks with the framework. It covers how 
 
 A benchmark measures a small piece of code (a *snippet*: a hash, a parser step, a lookup) in core cycles per call. You supply the inputs and the snippet; the runner owns the clock, the CPU, the memory and the output.
 
-> **Status.** Throughput mode, chained mode (word in/out and adapters), `ops_per_call`, sample rejection, layout-randomized epochs and environment checks work. The report tools (`tools/bm-report`, `bm-go`, `bm-compare`) work too.
+> **Status.** Throughput mode, chained mode (word in/out, pointer and adapters), `ops_per_call`, sample rejection, layout-randomized epochs and environment checks work. The report tools (`tools/bm-report`, `bm-go`, `bm-compare`) work too.
 
 ## Quick start
 
-A complete benchmark file, `benchmarks/bench_crc32.c` (shortened; the real file also gives both implementations a chained adapter, see [Chained mode](#chained-mode)):
+A complete benchmark file, `benchmarks/bench_crc32.c` (shortened):
 
 ```c
 #include <stdint.h>
@@ -139,14 +139,14 @@ A definition that breaks these rules stops the run with exit code 99 and a messa
 | `name` | implementation name, the last part of `Name/mode/impl` |
 | `fn` | `uint64_t fn(const void *in, void *state)`. `in` points at one corpus item. Required in throughput mode |
 | `chain` | `uint64_t chain(uint64_t in, void *state)`: chained mode, word in/out. Needs `item_size >= 8` |
-| `next` | `const void *next(uint64_t out, const void *item)`: chained adapter, used with `fn` when `chain` is NULL |
+| `next` | `const void *next(uint64_t out, const void *item, void *state)`: chained adapter for `fn`, only when `out` picks the next input. Usually NULL. See [Chained mode](#chained-mode) |
 | `setup` | `void *setup(const flw_corpus *c, void *arg)`, called at the start of every epoch, returns `state`. `arg` is the benchmark's `gen_arg`. Returning NULL means failure |
 | `teardown` | `void teardown(void *state)`, called after the last batch. `free` works for a `malloc`ed state |
 | `ops_per_call` | R, operations per call; 0 means 1. See [Several operations per call](#several-operations-per-call) |
 
 `setup` and `teardown` are not timed. They run once per epoch (10 times by default), because every epoch moves the corpus to a new address and wants fresh state; keep them repeatable and free everything in `teardown`. If `setup` returns NULL, that implementation is skipped with a warning and the run exits 1. An implementation without `setup` gets `state == NULL`.
 
-An implementation can serve both modes: give it `fn` for throughput and `chain` (or `next`) for chained. The benchmark's `mode` must be one it supports, or the run stops with exit 99; under `--mode` an implementation that lacks the functions for a mode is skipped with a warning.
+An implementation with `fn` serves both modes: in chained mode the runner passes `fn` each corpus item made to depend on the previous result. Give it `chain` as well to run chained as word in/out instead. The benchmark's `mode` must be one it supports, or the run stops with exit 99; under `--mode` an implementation that lacks the functions for a mode is skipped with a warning.
 
 ### Corpus generator
 
@@ -199,7 +199,7 @@ These traps apply when you benchmark `memcpy` or a hand-written copy loop, as in
 
 **Copy the destination and size into locals.** A byte store may write to any memory, including the state struct, so a loop over `st->dst[i]` and `st->n` reads both back from memory on every byte. Measured: that made the byte loop about 40% slower than the same loop with locals. Read `st->dst` and `st->n` into local variables before the loop.
 
-**Return a byte of the copy, not the size.** The copy's result is a store. Returning `st->n` gives the runner a value that does not depend on the copy, and in chained mode the next call then does not wait for the copy: calls overlap, and the result is throughput under a chained name. Return the last copied byte, `d[n - 1]`, and use an adapter like `crc_next`. The chained result is then the time until the copied data can be read, including the store-to-load forwarding of that last byte (about 4 to 5 cycles).
+**Return a byte of the copy, not the size.** The copy's result is a store. Returning `st->n` gives the runner a value that does not depend on the copy, and in chained mode the next call then does not wait for the copy: calls overlap, and the result is throughput under a chained name. Return the last copied byte, `d[n - 1]`. The chained result is then the time until the copied data can be read, including the store-to-load forwarding of that last byte (about 4 to 5 cycles).
 
 Check the result in the disassembly (`objdump -d build/benchmarks/bm_memcpy`): the libc version should contain `call memcpy@plt`, and the byte loop one byte load and one byte store per step.
 
@@ -235,7 +235,17 @@ A `harness_bound` result says the snippet costs *at most* the floor, nothing mor
 
 In chained mode every call's output feeds the next call's input, so calls cannot overlap and the result is **latency per call**. Use it for code on a dependency chain: a hash whose result picks the next bucket, a parser step whose output is the next offset.
 
-There are two shapes.
+There are three shapes. Most benchmarks need no extra code: the first two cover them.
+
+**Pointer.** An implementation with only `.fn`, the same function as in throughput mode, runs chained as it is:
+
+```c
+static const flw_impl crc_impls[] = {
+	{.name = "table", .fn = crc_table, .setup = crc_table_setup, .teardown = free},
+};
+```
+
+The runner passes `fn` the corpus item's address made to depend on the previous result (`item | (out & flw_zero())`, the **pointer dependency**). `out & flw_zero()` is 0, but the CPU cannot know that, so the next call waits for the previous one; the snippet still reads the corpus item. `fn` must return a value computed from what it read, or the next call does not wait (see the memcpy pitfall above).
 
 **Word in, word out.** Set `.chain`:
 
@@ -252,28 +262,31 @@ static const flw_impl impls[] = {
 };
 ```
 
-The runner reads the first 8 bytes of each corpus item, makes it depend on the previous output with `flw_chain_dep()` (the value stays the corpus item; only the timing depends on the previous call), and passes it in. Most hashes and arithmetic kernels fit this. The corpus items must be at least 8 bytes.
+The runner reads the first 8 bytes of each corpus item, makes it depend on the previous output with `flw_chain_dep()` (the value stays the corpus item; only the timing depends on the previous call), and passes it in. Most hashes and arithmetic kernels fit this. The corpus items must be at least 8 bytes. With both `.fn` and `.chain` set, chained mode uses `.chain`.
 
-**Adapter.** When the snippet takes a pointer, set `.fn` and `.next`. The runner calls `out = fn(next(out, item), state)`: `next` turns the previous output and the current corpus item into the pointer `fn` reads. It must return a valid pointer for **any** `out`. The usual adapter keeps the corpus item and only adds the dependency, as in the CRC example:
+**Adapter.** Only when the previous result really picks the next input: a table walk, a parser whose next token starts where the last one ended. Set `.fn` and `.next`. The runner calls `out = fn(next(out, item, state), state)`: `next` turns the previous output, the current corpus item and the implementation's state into the pointer `fn` reads. A table walk with its table in `state`:
 
 ```c
 static const void *
-crc_next(uint64_t out, const void *item)
+walk_next(uint64_t out, const void *item, void *state)
 {
-	return (const uint8_t *)item + (out & flw_zero());
+	const struct walk *w = state;
+
+	(void)item;
+	return &w->nodes[out & w->mask];
 }
 
-static const flw_impl crc_impls[] = {
-	{.name = "table", .fn = crc_table, .next = crc_next, .setup = crc_table_setup,
-	 .teardown = free},
+static const flw_impl impls[] = {
+	{.name = "walk", .fn = walk_step, .next = walk_next, .setup = walk_setup,
+	 .teardown = walk_teardown},
 };
 ```
 
-`out & flw_zero()` is 0, but the CPU cannot know that, so the next call waits for the previous one. A real adapter can also use `out` for real, for example to pick the next bucket (`return &table[out & mask];`), but then it must keep the inputs varied: see the collapse check below.
+`next` must return a valid pointer for **any** `out`, must use `out` in what it returns, and must keep the inputs varied (see the collapse check below). A `next` that moves on through `state` without `out`, such as `&w->nodes[w->pos++]`, passes every check, yet no call waits for the previous one: the result is throughput under a chained name, and the runner cannot tell.
 
-**Harness cost.** The runner subtracts the calibrated glue latency `a` (about 2 cycles on a recent Intel core) from chained results. Word in/out uses the startup calibration. Each adapter implementation is calibrated separately through its own `next` before its epochs (about 0.1 s), since `next` is part of the glue. The pointer is not read during that calibration, so loads in your snippet stay in its result.
+**Harness cost.** The runner subtracts the calibrated glue latency `a` (about 2 cycles on a recent Intel core) from chained results. Word in/out uses the startup calibration. The pointer dependency is calibrated once per run, before the first implementation that uses it (about 0.3 s, skipped when none does). Each adapter implementation is calibrated separately through its own `next` and `state` before its epochs (about 0.1 s), since `next` is part of the glue. The pointer is not read during these calibrations, so loads in your snippet stay in its result.
 
-**Floor.** Below a certain latency the harness hides the chain; the floor is about 8 cycles per call for word in/out on Kaby Lake (14 through a simple adapter). A raw result below the floor by more than 3% (plus half a cycle) is marked `harness_bound`, and its corrected value means nothing. Use `ops_per_call` to measure such snippets.
+**Floor.** Below a certain latency the harness hides the chain; the floor is about 8 cycles per call for word in/out and pointer on Kaby Lake (14 to 15 through an adapter, which adds a call to `next`). A raw result below the floor by more than 3% (plus half a cycle) is marked `harness_bound`, and its corrected value means nothing. Use `ops_per_call` to measure such snippets.
 
 The rule differs from throughput mode on purpose. The throughput floor is what an empty snippet reads, so a result at it could be anything cheaper and is marked. The chained floor is the shortest calibration chain that still measures right, so a result at it is a real measurement; only below it does the harness hide the chain.
 
@@ -283,7 +296,7 @@ The rule differs from throughput mode on purpose. The throughput floor is what a
 warning: Chain/chained/collapse: chain collapses: next() gave 1 distinct inputs in 65536 calls, expected at least 64
 ```
 
-Word in/out cannot collapse (its inputs are always the corpus items), so it is not checked.
+Word in/out and pointer cannot collapse (their inputs are always the corpus items), so they are not checked.
 
 Chained and throughput results of the same code measure different things (latency against throughput). The mode is part of the name (`Crc32/chained/table`); never compare across modes.
 
@@ -432,9 +445,9 @@ The JSONL file has one record per line, in this order:
 | --- | --- |
 | `env` | commit (`git describe --dirty`), CPU, core, kernel, DPDK version, PMU mode, build type, seed, every warning |
 | `timer` | cost of an empty timing window |
-| `calibration` (two) | harness cost and floors, chained and throughput |
+| `calibration` (two or three) | harness cost and floors: chained (word in/out) and throughput; `pointer` when an implementation ran chained through the pointer dependency |
 | `selftest` | whether the counters measured the reference snippets correctly |
-| `bench` | one per implementation and mode: name, mode, batch size `iters`, `ops_per_call`, epochs, samples, corpus size, the harness cost `a` and `floor` that apply, `subtract`, `harness_bound`; for adapters also their own calibration (`adapter`) |
+| `bench` | one per implementation and mode: name, mode, batch size `iters`, `ops_per_call`, epochs, samples, corpus size, the harness cost `a` and `floor` that apply and where they come from (`calibration`: `startup`, `pointer` or `adapter`), `subtract`, `harness_bound`; for adapters also their own calibration (`adapter`) |
 | `sample` | one per batch, after its `bench` record: `epoch`, `batch`, `iters`, `tsc`, `cycles`, `instr`, `flags` |
 
 Samples are raw: cycles per call is `cycles / iters`. A sample whose `flags` is not 0 was rejected: 1 `ratio` (the core's frequency changed, or an interrupt took time), 2 `ctx` (the thread was switched out), 4 `migrate` (it moved to another CPU). Rejected samples stay in the file but are left out of results; the console line says `(x of y samples rejected)`, and more than 10% rejected gives a warning. Lots of `ratio` rejections usually mean the governor is not `performance` or turbo is on; see [Rejected samples and layout sensitivity](#rejected-samples-and-layout-sensitivity). Per op is `(per_call - a) / ops_per_call` when the `bench` record says `subtract`, else `per_call / ops_per_call`; work on per-call values first (medians, the floor) and divide last. Read `cycles` (core cycles) rather than `tsc` (reference ticks, which move with the CPU frequency). In TSC-only mode `cycles` and `instr` are absent.
@@ -539,5 +552,6 @@ To declare it for a new benchmark, copy the `regress-crc32` test and change the 
 - [ ] The build is optimized, and benchmark targets keep LTO off.
 - [ ] No warnings in the run, or you know why each one is there.
 - [ ] A result marked `harness_bound` is not reported as a measurement.
-- [ ] An adapter returns a valid pointer for any `out`, and keeps its inputs varied.
+- [ ] In chained mode, `fn` returns a value computed from what it read.
+- [ ] An adapter is there only because `out` picks the next input; it uses `out`, returns a valid pointer for any `out`, and keeps its inputs varied.
 - [ ] With `ops_per_call`, the R operations inside a call form a chain in chained mode.

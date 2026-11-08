@@ -509,6 +509,8 @@ write_records(struct bm_ctx *ctx)
 
 	for (i = 0; i < sizeof(build) / sizeof(build[0]) && ret == 0; i++)
 		ret = write_one(&out, build[i](ctx));
+	if (ret == 0 && ctx->calib.pointer_done)
+		ret = write_one(&out, bm_calib_pointer_record(ctx));
 
 	/* per implementation: its bench record, then each epoch record and its samples */
 	for (i = 0; i < ctx->nresults && ret == 0; i++) {

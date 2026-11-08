@@ -400,6 +400,28 @@ loop_chained(const struct bm_pmu *pmu, flw_chain_fn fn, void *state, const flw_c
 	mark_diff(d, &t0, &t1);
 }
 
+/* the item's address, unchanged, but made to depend on out */
+static __attribute__((noinline)) void
+loop_pointer(const struct bm_pmu *pmu, flw_fn fn, void *state, const flw_corpus *c, size_t base,
+	size_t n, struct bm_mark *d)
+{
+	const char *items = c->items;
+	size_t isz = c->item_size, mask = c->count - 1, i;
+	struct bm_mark t0 = {0}, t1 = {0};
+	uintptr_t in;
+	uint64_t out = 0;
+
+	bm_begin(pmu, &t0);
+	BM_UNROLL_LOOP(BM_UNROLL)
+	for (i = 0; i < n; i++) {
+		in = (uintptr_t)(items + ((base + i) & mask) * isz);
+		out = fn((const void *)(uintptr_t)flw_chain_dep(in, out), state);
+	}
+	bm_end(pmu, &t1);
+	flw_use(out);
+	mark_diff(d, &t0, &t1);
+}
+
 static __attribute__((noinline)) void
 loop_adapter(const struct bm_pmu *pmu, flw_fn fn, flw_next_fn next, void *state,
 	const flw_corpus *c, size_t base, size_t n, struct bm_mark *d)
@@ -412,7 +434,7 @@ loop_adapter(const struct bm_pmu *pmu, flw_fn fn, flw_next_fn next, void *state,
 	bm_begin(pmu, &t0);
 	BM_UNROLL_LOOP(BM_UNROLL)
 	for (i = 0; i < n; i++)
-		out = fn(next(out, items + ((base + i) & mask) * isz), state);
+		out = fn(next(out, items + ((base + i) & mask) * isz, state), state);
 	bm_end(pmu, &t1);
 	flw_use(out);
 	mark_diff(d, &t0, &t1);
@@ -426,6 +448,8 @@ bm_job_run(const struct bm_pmu *pmu, const struct bm_job *job, size_t base, size
 		loop_throughput(pmu, job->fn, job->state, job->corpus, base, n, d);
 	else if (job->chain != NULL)
 		loop_chained(pmu, job->chain, job->state, job->corpus, base, n, d);
+	else if (job->next == NULL)
+		loop_pointer(pmu, job->fn, job->state, job->corpus, base, n, d);
 	else
 		loop_adapter(pmu, job->fn, job->next, job->state, job->corpus, base, n, d);
 }
@@ -450,7 +474,7 @@ bm_job_distinct_inputs(const struct bm_job *job, size_t n)
 		return -1;
 
 	for (i = 0; i < n; i++) {
-		p = job->next(out, items + (i & (c->count - 1)) * c->item_size);
+		p = job->next(out, items + (i & (c->count - 1)) * c->item_size, job->state);
 		out = job->fn(p, job->state);
 		if (p == NULL) {
 			distinct += !null_seen;

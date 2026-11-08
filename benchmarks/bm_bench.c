@@ -2,7 +2,8 @@
 
 /*
  * Registered benchmarks: selection, corpus, implementation setup, the
- * collapse check and adapter calibration, and the epochs of timed batches.
+ * pointer sweep, the collapse check and adapter calibration, and the epochs
+ * of timed batches.
  * Runs on the worker lcore; the records are written afterwards by the main
  * lcore.
  */
@@ -58,7 +59,7 @@ supports(const flw_impl *impl, flw_mode mode)
 {
 	if (mode == FLW_THROUGHPUT)
 		return impl->fn != NULL;
-	return impl->chain != NULL || (impl->fn != NULL && impl->next != NULL);
+	return impl->chain != NULL || impl->fn != NULL;
 }
 
 /* the modes to run b in: its own, or the --mode override; returns how many */
@@ -134,7 +135,12 @@ check_bench(const flw_bench *b)
 			fprintf(stderr,
 				"benchmark %s: impl %zu needs a name, and for its mode %s: %s\n",
 				b->name, j, bm_mode_name(b->mode),
-				b->mode == FLW_THROUGHPUT ? "fn" : "chain, or fn and next");
+				b->mode == FLW_THROUGHPUT ? "fn" : "chain or fn");
+			return -1;
+		}
+		if (impl->next != NULL && impl->fn == NULL) {
+			fprintf(stderr, "benchmark %s: impl %s has next, needs fn\n", b->name,
+				impl->name);
 			return -1;
 		}
 		/* word in/out reads the first 8 bytes of every item */
@@ -229,6 +235,39 @@ summarize(const struct bm_ctx *ctx, struct bm_result *r)
 	return 0;
 }
 
+/* a chained sweep on a pointer: its slope and confirmation, as at startup */
+static void
+check_sweep(struct bm_ctx *ctx, const char *what, const struct bm_calib_fit *f,
+	const struct bm_calib_risk *risk)
+{
+	if (ctx->calib.unit_cycles && (f->slope < f->expected * (1 - BM_CALIB_SLOPE_TOL) ||
+					      f->slope > f->expected * (1 + BM_CALIB_SLOPE_TOL)))
+		bm_warn(ctx, "%s: calibration slope %.3f, expected %.2f +- %.0f%%", what, f->slope,
+			f->expected, BM_CALIB_SLOPE_TOL * 100);
+	bm_warn_risk(ctx, what, risk, ctx->opts.subtract != BM_SUB_NONE);
+}
+
+/*
+ * Chained on a pointer through the runner's pointer dependency: the glue is
+ * the same for every implementation, so it is swept once, by the first one
+ * that needs it. The references never read the corpus, so any corpus does.
+ * Returns -1 if out of memory.
+ */
+static int
+prepare_pointer(struct bm_ctx *ctx, const struct bm_job *job)
+{
+	struct bm_calib *cal = &ctx->calib;
+
+	if (cal->pointer_done)
+		return 0;
+	if (bm_calib_pointer(&ctx->clock.pmu, job->corpus, NULL, NULL, &ctx->calib_opts, cal->ptr,
+		    &cal->pointer, &cal->pointer_risk) != 0)
+		return -1;
+	cal->pointer_done = 1;
+	check_sweep(ctx, "chained mode on a pointer", &cal->pointer, &cal->pointer_risk);
+	return 0;
+}
+
 /*
  * Chained through an adapter: check that next() keeps feeding varied
  * inputs, then calibrate the glue through this adapter. Returns 1 to go
@@ -238,7 +277,6 @@ static int
 prepare_adapter(struct bm_ctx *ctx, const struct bm_job *job, struct bm_result *r)
 {
 	size_t want = job->corpus->count < COLLAPSE_CALLS ? job->corpus->count : COLLAPSE_CALLS;
-	const struct bm_calib_fit *f = &r->adapter_fit;
 	char what[BM_NAME_MAX + 16];
 	long distinct;
 
@@ -256,16 +294,12 @@ prepare_adapter(struct bm_ctx *ctx, const struct bm_job *job, struct bm_result *
 		return 0;
 	}
 
-	if (bm_calib_adapter(&ctx->clock.pmu, job->corpus, job->next, &ctx->calib_opts,
+	if (bm_calib_pointer(&ctx->clock.pmu, job->corpus, job->next, job->state, &ctx->calib_opts,
 		    r->adapter_pts, &r->adapter_fit, &r->risk) != 0)
 		return -1;
 	r->adapter = 1;
-	if (ctx->calib.unit_cycles && (f->slope < f->expected * (1 - BM_CALIB_SLOPE_TOL) ||
-					      f->slope > f->expected * (1 + BM_CALIB_SLOPE_TOL)))
-		bm_warn(ctx, "%s: adapter calibration slope %.3f, expected %.2f +- %.0f%%", r->name,
-			f->slope, f->expected, BM_CALIB_SLOPE_TOL * 100);
 	snprintf(what, sizeof(what), "%s, its adapter", r->name);
-	bm_warn_risk(ctx, what, &r->risk, ctx->opts.subtract != BM_SUB_NONE);
+	check_sweep(ctx, what, &r->adapter_fit, &r->risk);
 	return 1;
 }
 
@@ -280,6 +314,9 @@ pick_calibration(const struct bm_ctx *ctx, struct bm_result *r)
 		r->risk = ctx->calib.throughput_risk;
 	} else if (r->adapter) {
 		f = &r->adapter_fit; /* r->risk set by prepare_adapter() */
+	} else if (r->pointer) {
+		f = &ctx->calib.pointer;
+		r->risk = ctx->calib.pointer_risk;
 	} else {
 		f = &ctx->calib.chained;
 		r->risk = ctx->calib.chained_risk;
@@ -410,9 +447,9 @@ report(struct bm_ctx *ctx, const struct bm_result *r)
 /*
  * E epochs. Each places the corpus at a new offset, sets the implementation
  * up again, measures the timer overhead and runs warm-up and K batches with
- * the stack shifted. The collapse check, adapter calibration and batch size
- * come from the first epoch. Returns 0 (also when skipped), -1 on a harness
- * error.
+ * the stack shifted. The pointer sweep, collapse check, adapter calibration
+ * and batch size come from the first epoch. Returns 0 (also when skipped),
+ * -1 on a harness error.
  */
 static int
 run_impl(struct bm_ctx *ctx, const flw_bench *b, struct bm_result *r)
@@ -434,6 +471,7 @@ run_impl(struct bm_ctx *ctx, const flw_bench *b, struct bm_result *r)
 	} else {
 		job.fn = impl->fn;
 		job.next = impl->next;
+		r->pointer = impl->next == NULL;
 	}
 	r->ops_per_call = impl->ops_per_call ? impl->ops_per_call : 1;
 
@@ -477,6 +515,8 @@ run_impl(struct bm_ctx *ctx, const flw_bench *b, struct bm_result *r)
 		if (e == 0) {
 			if (job.next != NULL)
 				ret = prepare_adapter(ctx, &job, r);
+			else if (r->pointer && prepare_pointer(ctx, &job) != 0)
+				ret = -1;
 			if (ret > 0) {
 				pick_calibration(ctx, r);
 				r->iters = bm_job_size(pmu, &job, target);
@@ -559,8 +599,7 @@ bm_run_benches(struct bm_ctx *ctx)
 					continue;
 				if (!supports(&b->impls[j], modes[m])) {
 					bm_warn(ctx, "%s: no %s, skipped", name,
-						modes[m] == FLW_THROUGHPUT ? "fn" :
-									     "chain or next");
+						modes[m] == FLW_THROUGHPUT ? "fn" : "chain or fn");
 					continue;
 				}
 				r = &ctx->results[ctx->nresults++];

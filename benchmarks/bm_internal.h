@@ -106,6 +106,8 @@ struct bm_result {
 	/* harness cost and floor that apply, per call in the calibration unit */
 	double a, floor;
 	int subtract; /* a is meant to be subtracted (--subtract) */
+	/* chained on a pointer through the runner's dependency: the shared sweep */
+	int pointer;
 	/* chained through an adapter: its own sweep and the collapse check */
 	int adapter;
 	struct bm_calib_point adapter_pts[1 + BM_CALIB_CHAIN];
@@ -145,7 +147,7 @@ struct bm_ctx {
 	struct bm_clock clock;
 	struct bm_sys sys;
 	struct bm_calib calib;
-	struct bm_calib_opts calib_opts; /* also used for adapter sweeps */
+	struct bm_calib_opts calib_opts; /* also used for pointer and adapter sweeps */
 	const regex_t *bench_re;	 /* compiled --bench, NULL selects all */
 	struct bm_result *results;
 	size_t nresults;
@@ -191,6 +193,8 @@ void bm_results_free(struct bm_ctx *ctx);
 /* bm_out.c: calibration, self-test, bench and sample records */
 json_t *bm_calib_chained_record(const struct bm_ctx *ctx);
 json_t *bm_calib_throughput_record(const struct bm_ctx *ctx);
+/* only when the pointer sweep ran */
+json_t *bm_calib_pointer_record(const struct bm_ctx *ctx);
 json_t *bm_selftest_record(const struct bm_ctx *ctx);
 json_t *bm_bench_record(const struct bm_ctx *ctx, const struct bm_result *r);
 json_t *bm_epoch_record(const struct bm_ctx *ctx, const struct bm_result *r, unsigned int e);
