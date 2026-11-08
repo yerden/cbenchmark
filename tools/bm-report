@@ -41,6 +41,11 @@ def calib_line(run):
                 st.get("timer"), st.get("confirmed")))
 
 
+def call_width(unit):
+    # the per-call column fits its label ("cycles/call", "tsc/call")
+    return max(10, len(unit) + len("/call"))
+
+
 def bench_line(b, unit):
     s = bm_stats.summarize(b, unit)
     lo, hi = s["ci"]
@@ -53,8 +58,8 @@ def bench_line(b, unit):
         notes.append("layout-sensitive")
     rej = s["rejected"]
     per_op = ("%10.2f" % s["corrected_per_op"]) if s["corrected_per_op"] is not None else "%10s" % "-"
-    return "%-36s %10.2f [%8.2f, %8.2f] %10.2f %s  %4d/%-4d %3d %3d %3d  %s" % (
-        b.name, s["per_call"], lo, hi, s["raw_per_op"], per_op,
+    return "%-36s %*.2f [%8.2f, %8.2f] %10.2f %s  %4d/%-4d %3d %3d %3d  %s" % (
+        b.name, call_width(unit), s["per_call"], lo, hi, s["raw_per_op"], per_op,
         s["kept"], s["samples"], rej["ratio"], rej["ctx"], rej["migrate"],
         ", ".join(notes))
 
@@ -77,8 +82,8 @@ def main():
         for w in warnings:
             print("  - " + w.replace("\n", "\n    "))
         print()
-        print("%-36s %10s %21s %10s %10s  %9s %3s %3s %3s  %s" % (
-            "benchmark", run.unit + "/call", "95% CI", "raw/op", "corr/op",
+        print("%-36s %*s %20s %10s %10s  %9s %3s %3s %3s  %s" % (
+            "benchmark", call_width(run.unit), run.unit + "/call", "95% CI", "raw/op", "corr/op",
             "kept", "rat", "ctx", "mig", "notes"))
         for b in run.benches.values():
             print(bench_line(b, run.unit))
