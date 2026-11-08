@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+"""Compare two benchmark JSONL files, base and new: per implementation the
+ratio new/base of the median of epoch medians (raw per call), its 95%
+bootstrap CI, and a verdict.
+
+Exit: 0 no regression; 1 a regression beyond --threshold, or under the ci
+profile a run that cannot be compared; 77 (Meson SKIP) under dev when there
+is no baseline or the runs cannot be compared."""
+
+import argparse
+import os
+import signal
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bm_stats  # noqa: E402
+
+EXIT_OK, EXIT_FAIL, EXIT_SKIP = 0, 1, 77
+
+
+def main():
+    # quiet exit when the reader closes the pipe (| head)
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("base")
+    ap.add_argument("new")
+    ap.add_argument("--threshold", type=float, default=3.0,
+                    help="slowdown in %% that fails (default 3)")
+    ap.add_argument("--min-effect", type=float, default=1.0,
+                    help="smallest change in %% called significant (default 1)")
+    ap.add_argument("--allow-same", action="store_true",
+                    help="compare runs of the same commit (A/A)")
+    ap.add_argument("--profile", choices=("dev", "ci"),
+                    help="exit policy (default: the new run's profile)")
+    args = ap.parse_args()
+
+    if not os.path.exists(args.base):
+        print("no baseline: %s" % args.base)
+        return EXIT_FAIL if args.profile == "ci" else EXIT_SKIP
+    if not os.path.exists(args.new):
+        print("no results: %s (run the benchmarks first)" % args.new)
+        return EXIT_FAIL if args.profile == "ci" else EXIT_SKIP
+    base, new = bm_stats.Run(args.base), bm_stats.Run(args.new)
+    profile = args.profile or new.env.get("profile", "dev")
+    refuse = EXIT_FAIL if profile == "ci" else EXIT_SKIP
+
+    bg, ng = base.env.get("git", ""), new.env.get("git", "")
+    if bg == ng and not args.allow_same:
+        print("both runs are from commit %s; use --allow-same for an A/A comparison" % bg)
+        return refuse
+    for g in (bg, ng):
+        if g.endswith("-dirty"):
+            print("warning: %s has uncommitted changes" % g)
+
+    status = EXIT_OK
+    unit = new.unit
+    print("unit: %s per call (raw), base %s, new %s" % (unit, bg, ng))
+    print("%-36s %10s %10s %8s %19s  %s" % ("benchmark", "base", "new", "ratio",
+                                           "95% CI", "verdict"))
+    for name, nb in new.benches.items():
+        bb = base.benches.get(name)
+        if bb is None:
+            print("%-36s %10s  new, no baseline" % (name, ""))
+            continue
+        diff = bm_stats.mismatches(base, new, bb, nb)
+        if diff:
+            print("%-36s not comparable: %s" % (name, "; ".join(diff)))
+            if status == EXIT_OK:
+                status = refuse
+            continue
+        c = bm_stats.compare(bb, nb, unit, args.min_effect / 100)
+        lo, hi = c["ci"]
+        pct = (c["ratio"] - 1) * 100
+        if not c["significant"]:
+            verdict = "no change"
+        elif pct >= args.threshold:
+            verdict = "REGRESSION %+.1f%%" % pct
+            status = EXIT_FAIL
+        elif pct > 0:
+            verdict = "slower %+.1f%% (below threshold)" % pct
+        else:
+            verdict = "faster %+.1f%%" % pct
+        print("%-36s %10.2f %10.2f %8.4f [%7.4f, %7.4f]  %s" % (
+            name, c["base"], c["new"], c["ratio"], lo, hi, verdict))
+    for name in base.benches:
+        if name not in new.benches:
+            print("%-36s gone from the new run" % name)
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,486 @@
+---
+# Language and base style.
+# Language: C          - explicitly target C code, not C++.
+# Standard: Cpp11      - language standard used by clang-format parser.
+# BasedOnStyle: LLVM   - LLVM is closer to DPDK than Chromium/Google.
+Language: C
+Standard: Cpp11
+BasedOnStyle: LLVM
+
+# Global formatting switch.
+# DisableFormat: false - formatting is enabled.
+DisableFormat: false
+
+# ============================================================================
+# Indentation
+# ============================================================================
+
+# Indent and tab width.
+# DPDK uses hard tabs with width 8.
+IndentWidth: 8
+TabWidth: 8
+
+# Use tabs for indentation, not spaces.
+# DPDK: "Indentation is a hard tab".
+UseTab: Always
+
+# Indentation for continuation lines.
+# DPDK style guide recommends:
+#   - two tabs (16) for control statements (if/for/while) so the body does not
+#     align with the continuation of the condition;
+#   - one tab (8) for ordinary expressions.
+# clang-format cannot distinguish these cases, so choose:
+#   8  - closer to ordinary expressions,
+#   16 - closer to DPDK control-statement style.
+ContinuationIndentWidth: 8
+
+# Indentation for elements inside braced initializers { ... }.
+BracedInitializerIndentWidth: 8
+
+# Do not indent case labels inside switch.
+# DPDK: case labels are at the same level as switch.
+IndentCaseLabels: false
+
+# Do not indent blocks inside case labels.
+# DPDK: case body is indented one tab, no more.
+IndentCaseBlocks: false
+
+# Do not indent extern block contents.
+IndentExternBlock: NoIndent
+
+# Do not indent goto labels.
+IndentGotoLabels: false
+
+# Do not indent preprocessor directives (#if, #ifdef, #endif).
+# DPDK keeps them at the left margin.
+IndentPPDirectives: None
+
+# Do not indent or wrap long function names.
+IndentWrappedFunctionNames: false
+
+# ============================================================================
+# Braces
+# ============================================================================
+
+# Use custom brace placement rules.
+BreakBeforeBraces: Custom
+
+# Pack long braced lists onto one line when they fit.
+BinPackLongBracedList: true
+
+# Brace placement configuration.
+BraceWrapping:
+    # Break after a case label before its brace (rare case).
+    AfterCaseLabel: false
+
+    # Do not break after if/for/while/switch.
+    # DPDK: if (cond) { on the same line.
+    AfterControlStatement: false
+
+    # Do not break after enum.
+    AfterEnum: false
+
+    # Break after function definition opening brace.
+    # DPDK: int\nfoo(void)\n{
+    AfterFunction: true
+
+    # Do not break after struct.
+    AfterStruct: false
+
+    # Do not break after union.
+    AfterUnion: false
+
+    # Do not break after extern block.
+    AfterExternBlock: false
+
+    # Do not break before else block.
+    # DPDK: } else {
+    BeforeElse: false
+
+    # Do not break before while block.
+    BeforeWhile: false
+
+    # Do not indent braces themselves.
+    IndentBraces: false
+
+    # Do not split empty functions into two lines (produces { } with space).
+    SplitEmptyFunction: false
+
+# ============================================================================
+# Line length
+# ============================================================================
+
+# Maximum line length.
+# DPDK recommends <=80 but accepts up to 100.
+ColumnLimit: 100
+
+# Do not reflow comments automatically.
+# DPDK comments often have hand-tuned formatting.
+ReflowComments: false
+
+# Do not break string literals.
+BreakStringLiterals: false
+
+# Break binary operations respecting operator precedence.
+# Available in clang-format 21.
+BreakBinaryOperations: RespectPrecedence
+
+# ============================================================================
+# Spaces
+# ============================================================================
+
+# Space before ( in control statements, but not before function calls.
+# DPDK: if (cond), while (cond), but foo(arg).
+SpaceBeforeParens: ControlStatementsExceptForEachMacros
+
+# No space after C-style cast: (int *)ptr.
+SpaceAfterCStyleCast: false
+
+# No space after logical not: !cond.
+SpaceAfterLogicalNot: false
+
+# No spaces inside parentheses: (expr).
+SpacesInParentheses: false
+
+# No spaces inside square brackets: arr[i].
+SpacesInSquareBrackets: false
+
+# Space around assignment operators: a = b.
+SpaceBeforeAssignmentOperators: true
+
+# Space before C++11 braced list: int a[]{1, 2, 3}.
+SpaceBeforeCpp11BracedList: true
+
+# No space in empty parentheses: ().
+SpaceInEmptyParentheses: false
+
+# Space in empty blocks: { }.
+SpaceInEmptyBlock: true
+
+# No spaces inside C-style cast parentheses: (int)x.
+SpacesInCStyleCastParentheses: false
+
+# One space before trailing comments: code; /* comment */
+SpacesBeforeTrailingComments: 1
+
+# Control spaces after // in line comments.
+# DPDK: // comment (exactly one space).
+SpacesInLineCommentPrefix:
+    Minimum: 1
+    Maximum: 1
+
+# Spaces around the colon in bitfields.
+# DPDK: uint16_t rec : 3,
+BitFieldColonSpacing: Both
+
+# Spaces around pointer qualifiers.
+# DPDK: int * const x (spaces on both sides).
+# After  -> int *const x
+# Both   -> int * const x  <- matches DPDK
+SpaceAroundPointerQualifiers: Both
+
+# No space before the colon in case labels: case 'a':
+SpaceBeforeCaseColon: false
+
+# No space before square brackets: arr[i].
+SpaceBeforeSquareBrackets: false
+
+# No spaces inside conditional expressions: if (a && b), not if ( a && b ).
+SpacesInConditionalStatement: false
+
+# ============================================================================
+# Pointers
+# ============================================================================
+
+# Star attached to the type name: int *x.
+PointerAlignment: Right
+
+# Do not derive pointer alignment from context.
+DerivePointerAlignment: false
+
+# ============================================================================
+# Alignment
+# ============================================================================
+
+# Do not align arguments with the opening bracket.
+# Important in combination with ContinuationIndentWidth for control statements.
+AlignAfterOpenBracket: DontAlign
+
+# Do not align consecutive assignments.
+AlignConsecutiveAssignments: false
+
+# Do not align consecutive declarations.
+# Enabling this aligns struct members but affects all declarations.
+AlignConsecutiveDeclarations: false
+
+# Align escaped newlines in macros to the left.
+AlignEscapedNewlines: Left
+
+# Align operands of multi-line expressions.
+AlignOperands: true
+
+# Align trailing comments.
+# Useful for comments in struct definitions.
+AlignTrailingComments: true
+
+# ============================================================================
+# Line breaking
+# ============================================================================
+
+# Allow short empty blocks on a single line: { }.
+AllowShortBlocksOnASingleLine: Empty
+
+# Do not put short case labels on a single line.
+AllowShortCaseLabelsOnASingleLine: false
+
+# Allow short enums on a single line: enum { A, B }.
+AllowShortEnumsOnASingleLine: true
+
+# Do not compress function definitions onto a single line.
+# DPDK does not use inline function compression.
+AllowShortFunctionsOnASingleLine: Empty
+
+# Never put short if statements on a single line.
+AllowShortIfStatementsOnASingleLine: Never
+
+# Do not put short loops on a single line.
+AllowShortLoopsOnASingleLine: false
+
+# Always put return type of function definitions on its own line.
+# Prototypes in headers stay on one line.
+AlwaysBreakAfterReturnType: TopLevelDefinitions
+
+# Do not force multi-line strings onto a new line.
+AlwaysBreakBeforeMultilineStrings: false
+
+# Binary operators stay at the end of the previous line.
+# DPDK: a + b +\n    c;
+BreakBeforeBinaryOperators: None
+
+# Ternary operators also stay at the end of the line.
+BreakBeforeTernaryOperators: false
+
+# Pack function call arguments.
+BinPackArguments: true
+
+# Pack function declaration parameters.
+BinPackParameters: true
+
+# Do not move all arguments to the next line at once.
+AllowAllArgumentsOnNextLine: false
+
+# Do not move all declaration parameters to the next line at once.
+AllowAllParametersOfDeclarationOnNextLine: false
+
+# Do not try to auto-detect bin packing.
+ExperimentalAutoDetectBinPacking: false
+
+# Always separate definition blocks with an empty line.
+SeparateDefinitionBlocks: Always
+
+# Remove empty lines inside unwrapped lines.
+RemoveEmptyLinesInUnwrappedLines: true
+
+# ============================================================================
+# Empty lines
+# ============================================================================
+
+# Keep at most two consecutive empty lines.
+MaxEmptyLinesToKeep: 1
+
+# Do not keep empty lines at the start of blocks.
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+# ============================================================================
+# Includes
+# ============================================================================
+
+# Sort includes like rte (=DPDK) -> flw -> other -> local flw -> local other
+SortIncludes: true
+IncludeBlocks: Regroup
+
+IncludeCategories:
+    # cmocka: requires setjmp.h/stdarg.h/stddef.h/stdint.h included first
+    - Regex: '^<cmocka\.h>'
+      Priority: 4
+    # flw_
+    - Regex: '^<([^>]*/)?flw_'
+      Priority: 3
+    # DPDK
+    - Regex: '^<rte_'
+      Priority: 2
+    # System
+    - Regex: '^<'
+      Priority: 1
+    # "flw_
+    - Regex: '^"([^"]*/)?flw_'
+      Priority: 6
+    # Local
+    - Regex: '^"'
+      Priority: 7
+
+# ============================================================================
+# Macros
+# ============================================================================
+
+# Reformat bodies of #define macros.
+SkipMacroDefinitionBody: false
+
+# Macros that clang-format should treat as attributes.
+# Helps place them correctly before the return type.
+AttributeMacros:
+    - __rte_always_inline
+    - __rte_noinline
+    - __rte_internal
+    - __rte_experimental
+    - __rte_experimental_msg
+    - __rte_unused
+    - __rte_hot
+    - __rte_cold
+    - __rte_warn_unused_result
+    - __rte_cache_aligned
+    - __rte_packed
+    - __rte_weak
+    - __rte_constructor
+    - __rte_destructor
+    - __rte_export
+
+# Macros that expand to type names.
+TypenameMacros:
+    - RTE_ATOMIC
+
+# ============================================================================
+# DPDK / BSD / system foreach macros
+# ============================================================================
+
+# List of iterator macros that clang-format should handle like for/while.
+ForEachMacros:
+    - CIRBUF_FOREACH
+    - FOREACH_ABS_FUNC_IN_PORT
+    - FOREACH_DEVICE_ON_AUXILARY_BUS
+    - FOREACH_DEVICE_ON_PCIBUS
+    - FOREACH_DEVICE_ON_PLATFORM_BUS
+    - FOREACH_DEVICE_ON_VMBUS
+    - FOREACH_DRIVER_ON_AUXILARY_BUS
+    - FOREACH_DRIVER_ON_PCIBUS
+    - FOREACH_DRIVER_ON_PLATFORM_BUS
+    - FOREACH_DRIVER_ON_VMBUS
+    - FOREACH_SUBDEV
+    - FOREACH_SUBDEV_STATE
+    - ILIST_FOREACH
+    - LIST_FOREACH
+    - LIST_FOREACH_FROM
+    - LIST_FOREACH_FROM_SAFE
+    - LIST_FOREACH_SAFE
+    - MLX5_ETH_FOREACH_DEV
+    - MLX5_IPOOL_FOREACH
+    - MLX5_L3T_FOREACH
+    - ML_AVG_FOREACH_QP
+    - ML_AVG_RESET_FOREACH_QP
+    - ML_MAX_FOREACH_QP
+    - ML_MAX_RESET_FOREACH_QP
+    - ML_MIN_FOREACH_QP
+    - ML_MIN_RESET_FOREACH_QP
+    - PLT_TAILQ_FOREACH_SAFE
+    - RTE_BBDEV_FOREACH
+    - RTE_DEV_FOREACH
+    - RTE_EAL_DEVARGS_FOREACH
+    - RTE_EAL_DRIVER_PATH_FOREACH
+    - RTE_ETH_FOREACH_DEV
+    - RTE_ETH_FOREACH_DEV_OWNED_BY
+    - RTE_ETH_FOREACH_DEV_SIBLING
+    - RTE_ETH_FOREACH_MATCHING_DEV
+    - RTE_ETH_FOREACH_VALID_DEV
+    - RTE_GPU_FOREACH
+    - RTE_GPU_FOREACH_CHILD
+    - RTE_GPU_FOREACH_PARENT
+    - RTE_LCORE_FOREACH
+    - RTE_LCORE_FOREACH_SKIP_MAIN
+    - RTE_LCORE_FOREACH_WORKER
+    - RTE_TAILQ_FOREACH
+    - RTE_TAILQ_FOREACH_SAFE
+    - SILIST_FOREACH
+    - SLIST_FOREACH
+    - SLIST_FOREACH_FROM
+    - SLIST_FOREACH_FROM_SAFE
+    - SLIST_FOREACH_SAFE
+    - STAILQ_FOREACH
+    - TAILQ_FOREACH
+    - TAILQ_FOREACH_ENTRY
+    - TAILQ_FOREACH_ENTRY_SAFE
+    - TAILQ_FOREACH_FROM_SAFE
+    - TAILQ_FOREACH_SAFE
+    - json_array_foreach
+    - json_object_foreach
+    - rte_graph_foreach
+    - rte_graph_foreach_node
+    - vdev_netvsc_foreach_iface
+    - FLW_VFS_LOCKED
+    - FLW_VFS_FOREACH
+    - FLW_GENERIC_LOCK_LIST_LOCKED
+
+# ============================================================================
+# Attributes and inline asm
+# ============================================================================
+
+# Function attributes always on their own line before the return type.
+# DPDK: __rte_internal\nconst char *\nfoo(void)
+# Available in clang-format 21.
+BreakAfterAttributes: Always
+
+# Break before colons in inline asm only when input/output spans multiple lines.
+# Available in clang-format 21.
+BreakBeforeInlineASMColon: OnlyMultiline
+
+# ============================================================================
+# Formatting penalties
+# ============================================================================
+
+# Penalty for breaking at an assignment operator.
+# High value prevents breaking "a = very_long_expression".
+PenaltyBreakAssignment: 200
+
+# Penalty for breaking before the first function call argument.
+PenaltyBreakBeforeFirstCallParameter: 300
+
+# Penalty for breaking after an opening parenthesis.
+PenaltyBreakOpenParenthesis: 300
+
+# Very high penalty for breaking before member access (. or ->).
+PenaltyBreakBeforeMemberAccess: 100000
+
+# Very high penalty for breaking comments.
+PenaltyBreakComment: 1000000
+
+# Penalty for breaking string literals.
+PenaltyBreakString: 1000
+
+# Penalty for breaking before the first <<.
+PenaltyBreakFirstLessLess: 0
+
+# Very high penalty for exceeding ColumnLimit.
+PenaltyExcessCharacter: 1000000
+
+# Penalty for putting the return type on its own line.
+PenaltyReturnTypeOnItsOwnLine: 60
+
+# ============================================================================
+# Misc
+# ============================================================================
+
+# Use LF line endings.
+LineEnding: LF
+
+# Do not add a blank line at end of file.
+# DPDK explicitly forbids a trailing blank line.
+InsertNewlineAtEOF: true
+
+# Macros that delimit blocks (not used in DPDK).
+MacroBlockBegin: ''
+MacroBlockEnd: ''
+
+# Objective-C setting.
+ObjCSpaceAfterProperty: true
+
+# Do not change placement of const/volatile qualifiers.
+QualifierAlignment: Leave

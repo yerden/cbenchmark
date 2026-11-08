@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+"""Go benchmark format for benchstat: config lines, then one line per kept
+sample. Values are raw per op (per call divided by ops_per_call); the
+harness cost a is not subtracted, so runs compare like for like."""
+
+import argparse
+import os
+import signal
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bm_stats  # noqa: E402
+
+CONFIG = ("cpu", "core", "core_type", "dpdk", "git", "profile", "build_type",
+          "pmu_mode", "page_size", "governor", "turbo")
+
+
+def main():
+    # quiet exit when the reader closes the pipe (| head)
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("file", help="JSONL file written by a benchmark")
+    args = ap.parse_args()
+
+    run = bm_stats.Run(args.file)
+    for k in CONFIG:
+        v = run.env.get(k)
+        if v is not None:
+            print("%s: %s" % (k, str(v).lower() if isinstance(v, bool) else v))
+    hz = run.tsc_hz
+    for b in run.benches.values():
+        r = b.ops_per_call
+        for s in b.samples:
+            if s["flags"]:
+                continue
+            ops = s["iters"] * r
+            # the name suffix is always -1: in Go it is GOMAXPROCS, not a core
+            fields = ["Benchmark%s-1" % b.name, str(ops)]
+            if hz:
+                fields.append("%.4f ns/op" % (s["tsc"] / ops / hz * 1e9))
+            if "cycles" in s:
+                fields.append("%.4f cycles/op" % (s["cycles"] / ops))
+                if "instr" in s and s["cycles"]:
+                    fields.append("%.4f IPC" % (s["instr"] / s["cycles"]))
+            print("\t".join(fields))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
