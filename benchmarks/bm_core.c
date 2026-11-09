@@ -422,24 +422,6 @@ loop_pointer(const struct bm_pmu *pmu, flw_fn fn, void *state, const flw_corpus 
 	mark_diff(d, &t0, &t1);
 }
 
-static __attribute__((noinline)) void
-loop_adapter(const struct bm_pmu *pmu, flw_fn fn, flw_next_fn next, void *state,
-	const flw_corpus *c, size_t base, size_t n, struct bm_mark *d)
-{
-	const char *items = c->items;
-	size_t isz = c->item_size, mask = c->count - 1, i;
-	struct bm_mark t0 = {0}, t1 = {0};
-	uint64_t out = 0;
-
-	bm_begin(pmu, &t0);
-	BM_UNROLL_LOOP(BM_UNROLL)
-	for (i = 0; i < n; i++)
-		out = fn(next(out, items + ((base + i) & mask) * isz, state), state);
-	bm_end(pmu, &t1);
-	flw_use(out);
-	mark_diff(d, &t0, &t1);
-}
-
 void
 bm_job_run(const struct bm_pmu *pmu, const struct bm_job *job, size_t base, size_t n,
 	struct bm_mark *d)
@@ -448,50 +430,8 @@ bm_job_run(const struct bm_pmu *pmu, const struct bm_job *job, size_t base, size
 		loop_throughput(pmu, job->fn, job->state, job->corpus, base, n, d);
 	else if (job->chain != NULL)
 		loop_chained(pmu, job->chain, job->state, job->corpus, base, n, d);
-	else if (job->next == NULL)
-		loop_pointer(pmu, job->fn, job->state, job->corpus, base, n, d);
 	else
-		loop_adapter(pmu, job->fn, job->next, job->state, job->corpus, base, n, d);
-}
-
-long
-bm_job_distinct_inputs(const struct bm_job *job, size_t n)
-{
-	const flw_corpus *c = job->corpus;
-	const char *items = c->items;
-	size_t slots = 1, mask, i, h;
-	const void **set, *p;
-	uint64_t out = 0;
-	long distinct = 0;
-	int null_seen = 0;
-
-	/* open addressing, at most half full */
-	while (slots < 2 * n)
-		slots *= 2;
-	mask = slots - 1;
-	set = calloc(slots, sizeof(*set));
-	if (set == NULL)
-		return -1;
-
-	for (i = 0; i < n; i++) {
-		p = job->next(out, items + (i & (c->count - 1)) * c->item_size, job->state);
-		out = job->fn(p, job->state);
-		if (p == NULL) {
-			distinct += !null_seen;
-			null_seen = 1;
-			continue;
-		}
-		h = (size_t)(((uintptr_t)p * 0x9e3779b97f4a7c15ull) >> 17) & mask;
-		while (set[h] != NULL && set[h] != p)
-			h = (h + 1) & mask;
-		if (set[h] == NULL) {
-			set[h] = p;
-			distinct++;
-		}
-	}
-	flw_use(out);
-	free(set);
-	return distinct;
+		loop_pointer(pmu, job->fn, job->state, job->corpus, base, n, d);
 }
 
 /* largest batch: a snippet this cheap is broken, not fast */

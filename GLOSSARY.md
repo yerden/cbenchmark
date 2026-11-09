@@ -28,7 +28,7 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 
 ## The two modes
 
-**Chained mode.** Each call's output is fed into the next call, so the CPU must finish one call before starting the next. Measures **latency**: how long one call takes when something waits for its result.
+**Chained mode.** Each call is made to wait for the previous call's output (through a *fake dependency*), so the CPU must finish one call before starting the next. Measures **latency**: how long one call takes when something waits for its result.
 
 **Latency.** Time from a call's input being ready to its output being ready.
 
@@ -38,15 +38,11 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 
 ### Chained mode details
 
-**Adapter.** An optional benchmark function `next(out, item, state)` for when the previous output really picks the next input (a table walk, a parser's next offset). It turns the previous output, the next corpus item and the implementation's state into the pointer the next call reads. Pointer snippets that just need chaining use the *pointer dependency* instead.
-
-**Collapse.** A chain stuck feeding the snippet the same few inputs again and again (for example a value that becomes 0 and stays 0). The CPU then learns the pattern and the numbers are too good. The runner checks adapters for it before timing.
-
-**Distinct inputs.** The collapse check's measure: how many different pointers `next` returned in 65,536 untimed calls. Too few means collapse.
+**Collapse.** A chain stuck feeding the snippet the same few inputs again and again (for example a value that becomes 0 and stays 0). The CPU then learns the pattern and the numbers are too good. The runner's chains cannot collapse, since their inputs are always corpus items; a walk inside one call can, and the runner does not check it.
 
 **Fake dependency.** A trick to chain calls without changing the inputs: the next input is `item | (out & 0)`, where the 0 is hidden from the CPU and the compiler (`flw_zero()`). The value is the corpus item, but the CPU must wait for `out`. Done by `flw_chain_dep()`.
 
-**Pointer dependency.** The runner's chaining for snippets that take a pointer (`fn`) and have no adapter: the fake dependency applied to the corpus item's address. The snippet reads the corpus item unchanged, but the call waits for the previous one. Calibrated once per run (`ref/ptr-*`).
+**Pointer dependency.** The runner's chaining for snippets that take a pointer (`fn`) and have no `chain`: the fake dependency applied to the corpus item's address. The snippet reads the corpus item unchanged, but the call waits for the previous one. Calibrated once per run (`ref/ptr-*`).
 
 **Word in, word out.** The simple chained shape: the snippet takes a 64-bit number and returns one (`chain`). The runner supplies the first 8 bytes of each corpus item as input.
 
@@ -76,7 +72,7 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 
 ## Harness cost and calibration
 
-**a (intercept).** The harness cost of one chained call, in cycles: call, return, loop and the fake dependency (on a word or a pointer) or adapter. About 2 cycles. In chained mode it is subtracted from results. The name comes from the fitted line `cost = a + 3k`.
+**a (intercept).** The harness cost of one chained call, in cycles: call, return, loop and the fake dependency (on a word or a pointer). About 2 cycles. In chained mode it is subtracted from results. The name comes from the fitted line `cost = a + 3k`.
 
 **Calibration.** At startup, the runner times reference snippets of known cost through the same loops as user snippets. This tells it the harness cost (`a`), the floors, and whether the counters work.
 
@@ -86,7 +82,7 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 
 **Floor.** The lowest cost per call the harness can show. Throughput: about 5 cycles (the cost of calling a do-nothing snippet). Chained: about 8 cycles (the smallest calibration point still on the line). A snippet cheaper than the floor reads as the floor.
 
-**Glue.** The code between two snippet calls: the call itself, loop counter, index, load, fake dependency or adapter. Its cost is the harness cost.
+**Glue.** The code between two snippet calls: the call itself, loop counter, index, load and fake dependency. Its cost is the harness cost.
 
 **Harness.** The runner's code around the snippet: the timing loop and its glue.
 
@@ -104,7 +100,6 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 - `ref/add-chain-k`: k additions in a chain; k cycles.
 - `ref/imul-indep-s`: s multiplications that do not wait for each other; about s cycles (one multiply per cycle).
 - `ref/ptr-nop`, `ref/ptr-imul-chain-k`: the same, called on a pointer through the pointer dependency.
-- `ref/adapter-nop`, `ref/adapter-imul-chain-k`: the same, called through an implementation's adapter.
 
 **Residual.** How far a calibration point lies from the fitted line.
 

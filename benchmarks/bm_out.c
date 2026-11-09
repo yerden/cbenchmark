@@ -192,30 +192,6 @@ bm_selftest_record(const struct bm_ctx *ctx)
 	/* clang-format on */
 }
 
-/* an adapter's own chained sweep, like a calibration record */
-static json_t *
-adapter_calib(const struct bm_result *r)
-{
-	const struct bm_calib_fit *f = &r->adapter_fit;
-	json_t *pts = points_append(json_array(), r->adapter_pts, 1 + BM_CALIB_CHAIN);
-
-	if (pts == NULL)
-		return NULL;
-	/* clang-format off */
-	return json_pack("{s:f, s:f, s:f, s:f, s:i, s:i, s:f, s:f, s:I, s:o}",
-			 "a", f->a,
-			 "floor", f->floor,
-			 "slope", f->slope,
-			 "expected_slope", f->expected,
-			 "floor_k", (int)f->floor_k,
-			 "fit_points", f->npts,
-			 "a_alt", r->risk.a_alt,
-			 "floor_alt", r->risk.floor_alt,
-			 "distinct_inputs", (json_int_t)r->distinct_inputs,
-			 "points", pts);
-	/* clang-format on */
-}
-
 json_t *
 bm_bench_record(const struct bm_ctx *ctx, const struct bm_result *r)
 {
@@ -235,7 +211,7 @@ bm_bench_record(const struct bm_ctx *ctx, const struct bm_result *r)
 			"warmup", BM_BENCH_WARMUP,
 			"seed", (json_int_t)ctx->opts.seed,
 			"corpus_bytes", (json_int_t)r->corpus_bytes,
-			"calibration", r->adapter ? "adapter" : r->pointer ? "pointer" : "startup",
+			"calibration", r->pointer ? "pointer" : "startup",
 			"a", r->a,
 			"floor", r->floor,
 			"a_alt", r->risk.a_alt,
@@ -255,12 +231,6 @@ bm_bench_record(const struct bm_ctx *ctx, const struct bm_result *r)
 	}
 	/* takes rej in every case */
 	if (json_object_update_new(rec, rej) != 0) {
-		json_decref(rec);
-		return NULL;
-	}
-	if (rec != NULL &&
-		r->adapter &&
-		json_object_set_new(rec, "adapter", adapter_calib(r)) != 0) {
 		json_decref(rec);
 		return NULL;
 	}

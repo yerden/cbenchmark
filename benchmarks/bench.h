@@ -29,24 +29,17 @@ typedef struct flw_corpus {
 typedef int (*flw_gen_fn)(flw_corpus *c, uint64_t seed, size_t count, void *arg);
 
 /*
- * throughput, or chained on a pointer: the runner makes each corpus item
- * depend on the previous output, or calls next when it is set
+ * throughput, or chained on a pointer: the runner passes each corpus item's
+ * address made to depend on the previous output
  */
 typedef uint64_t (*flw_fn)(const void *in, void *state);
-/* chained, word in/out */
+/* chained, word in/out; takes over from fn in chained mode */
 typedef uint64_t (*flw_chain_fn)(uint64_t in, void *state);
-/*
- * chained adapter, for when out picks the next input: turns the previous
- * output and a corpus item into the input of the next fn call. It must use
- * out, and return a valid input for any out.
- */
-typedef const void *(*flw_next_fn)(uint64_t out, const void *item, void *state);
 
 typedef struct {
 	const char *name;				/* "table", "pclmul", ... */
 	flw_fn fn;					/* throughput, or chained on a pointer */
 	flw_chain_fn chain;				/* chained word in/out, may be NULL */
-	flw_next_fn next;				/* chained adapter for fn, may be NULL */
 	void *(*setup)(const flw_corpus *c, void *arg); /* may be NULL */
 	void (*teardown)(void *state);			/* may be NULL */
 	unsigned int ops_per_call;			/* operations per call, R; 0 means 1 */

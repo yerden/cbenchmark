@@ -52,9 +52,9 @@
 	}
 
 /*
- * k dependent imul on the pointer fn is called with, for the pointer and
- * adapter sweeps. The pointer is not read: the snippet's own loads are
- * part of its cost.
+ * k dependent imul on the pointer fn is called with, for the pointer
+ * sweep. The pointer is not read: the snippet's own loads are part of its
+ * cost.
  */
 #define REF_PTR_IMUL_CHAIN(k)                                                             \
 	static uint64_t ref_ptr_imul_chain_##k(const void *p, void *state)                \
@@ -195,10 +195,10 @@ measure_round(const struct bm_pmu *pmu, const struct bm_job *job, size_t n,
  * a second fit that confirms a and the floor, or says how far off they may be.
  */
 static void
-sweep(const struct bm_pmu *pmu, const flw_corpus *c, flw_next_fn next, void *state,
-	struct ref *refs, int nrefs, const struct bm_calib_opts *o, struct scratch *s)
+sweep(const struct bm_pmu *pmu, const flw_corpus *c, struct ref *refs, int nrefs,
+	const struct bm_calib_opts *o, struct scratch *s)
 {
-	struct bm_job job = {.corpus = c, .next = next, .state = state};
+	struct bm_job job = {.corpus = c};
 	double per_op, tsc, instr, lo2[MAX_REFS], hi[MAX_REFS];
 	unsigned int r;
 	int i;
@@ -444,7 +444,7 @@ bm_calibrate(const struct bm_pmu *pmu, const flw_corpus *c, const struct bm_cali
 			.fn = imul_indep[i],
 			.p = &cal->indep[1 + i]};
 	}
-	sweep(pmu, c, NULL, NULL, refs, n, o, &s);
+	sweep(pmu, c, refs, n, o, &s);
 
 	fit_sweep(cal->imul, 1 + BM_CALIB_CHAIN, o->imul_latency, cal->unit_cycles, &cal->chained);
 	fit_sweep(cal->add, BM_CALIB_CHAIN, o->add_latency, cal->unit_cycles, &cal->add_fit);
@@ -483,12 +483,9 @@ bm_calibrate(const struct bm_pmu *pmu, const flw_corpus *c, const struct bm_cali
 }
 
 int
-bm_calib_pointer(const struct bm_pmu *pmu, const flw_corpus *c, flw_next_fn next, void *state,
-	const struct bm_calib_opts *o, struct bm_calib_point *p, struct bm_calib_fit *f,
-	struct bm_calib_risk *risk)
+bm_calib_pointer(const struct bm_pmu *pmu, const flw_corpus *c, const struct bm_calib_opts *o,
+	struct bm_calib_point *p, struct bm_calib_fit *f, struct bm_calib_risk *risk)
 {
-	const char *nop = next ? "ref/adapter-nop" : "ref/ptr-nop";
-	const char *imul = next ? "ref/adapter-imul-chain" : "ref/ptr-imul-chain";
 	struct bm_calib_fit alt;
 	struct ref refs[1 + BM_CALIB_CHAIN];
 	struct scratch s;
@@ -499,15 +496,15 @@ bm_calib_pointer(const struct bm_pmu *pmu, const flw_corpus *c, flw_next_fn next
 	if (buf == NULL)
 		return -1;
 
-	point_init(&p[0], nop, 0);
+	point_init(&p[0], "ref/ptr-nop", 0);
 	refs[0] = (struct ref) {.mode = FLW_CHAINED, .fn = ref_nop, .p = &p[0]};
 	for (i = 0; i < BM_CALIB_CHAIN; i++) {
-		point_init(&p[1 + i], imul, chain_k[i]);
+		point_init(&p[1 + i], "ref/ptr-imul-chain", chain_k[i]);
 		refs[1 + i] = (struct ref) {.mode = FLW_CHAINED,
 			.fn = ptr_imul_chain[i],
 			.p = &p[1 + i]};
 	}
-	sweep(pmu, c, next, state, refs, 1 + BM_CALIB_CHAIN, o, &s);
+	sweep(pmu, c, refs, 1 + BM_CALIB_CHAIN, o, &s);
 	fit_sweep(p, 1 + BM_CALIB_CHAIN, o->imul_latency, pmu->nctr > BM_CTR_CYCLES, f);
 	fit_alt(p, 1 + BM_CALIB_CHAIN, o->imul_latency, pmu->nctr > BM_CTR_CYCLES, &alt);
 	risk_set(risk, f, &alt);

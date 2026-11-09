@@ -48,7 +48,7 @@ ACHAIN(4)
 ACHAIN(16)
 /* clang-format on */
 
-/* adapter state: the corpus, so next can pick an item by out */
+/* walk state: the corpus, so each step can pick the next item */
 struct walk {
 	const uint64_t *items;
 	size_t mask;
@@ -67,25 +67,16 @@ walk_setup(const flw_corpus *c, void *arg)
 	return w;
 }
 
-/* a real adapter: out picks the next item */
-static const void *
-next_walk(uint64_t out, const void *item, void *state)
+/* a walk inside one call: each item picks the next, 8 steps (ops_per_call = 8) */
+static uint64_t
+walk_8(uint64_t in, void *state)
 {
 	const struct walk *w = state;
+	int i;
 
-	(void)item;
-	return &w->items[(out >> 32) & w->mask];
-}
-
-/* collapses: ignores the item, the input depends on out alone (and is constant) */
-static uint64_t sink_word;
-
-static const void *
-next_stuck(uint64_t out, const void *item, void *state)
-{
-	(void)item;
-	(void)state;
-	return (const char *)&sink_word + (out & flw_zero());
+	for (i = 0; i < 8; i++)
+		in = w->items[(in >> 32) & w->mask];
+	return in;
 }
 
 static const flw_impl impls[] = {
@@ -97,12 +88,11 @@ static const flw_impl impls[] = {
 	{.name = "imul-16-R8", .chain = w_16, .ops_per_call = 8},
 	{.name = "ptr-imul-4", .fn = a_4},
 	{.name = "ptr-imul-16", .fn = a_16},
-	{.name = "adapter-imul-4",
-		.fn = a_4,
-		.next = next_walk,
+	{.name = "walk-R8",
+		.chain = walk_8,
 		.setup = walk_setup,
-		.teardown = free},
-	{.name = "collapse", .fn = a_4, .next = next_stuck},
+		.teardown = free,
+		.ops_per_call = 8},
 };
 static const flw_bench b = {.name = "Chain",
 	.mode = FLW_CHAINED,

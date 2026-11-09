@@ -106,13 +106,7 @@ struct bm_result {
 	/* harness cost and floor that apply, per call in the calibration unit */
 	double a, floor;
 	int subtract; /* a is meant to be subtracted (--subtract) */
-	/* chained on a pointer through the runner's dependency: the shared sweep */
-	int pointer;
-	/* chained through an adapter: its own sweep and the collapse check */
-	int adapter;
-	struct bm_calib_point adapter_pts[1 + BM_CALIB_CHAIN];
-	struct bm_calib_fit adapter_fit;
-	long distinct_inputs;
+	int pointer;  /* chained through the pointer dependency: the pointer sweep */
 	/* the calibration that applies, confirmed or not by the second-fastest rounds */
 	struct bm_calib_risk risk;
 
@@ -147,7 +141,7 @@ struct bm_ctx {
 	struct bm_clock clock;
 	struct bm_sys sys;
 	struct bm_calib calib;
-	struct bm_calib_opts calib_opts; /* also used for pointer and adapter sweeps */
+	struct bm_calib_opts calib_opts; /* also used for the pointer sweep */
 	const regex_t *bench_re;	 /* compiled --bench, NULL selects all */
 	struct bm_result *results;
 	size_t nresults;

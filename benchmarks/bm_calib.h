@@ -97,15 +97,12 @@ int bm_calibrate(const struct bm_pmu *pmu, const flw_corpus *c, const struct bm_
 	struct bm_calib *cal);
 
 /*
- * A chained sweep on a pointer. With next NULL, the runner's pointer
- * dependency: ref/ptr-nop and ref/ptr-imul-chain-k, once per run. Otherwise
- * an implementation's adapter: ref/adapter-nop and ref/adapter-imul-chain-k
- * called on next()'s result, with state passed to next. p holds
+ * The chained sweep through the pointer dependency: ref/ptr-nop and
+ * ref/ptr-imul-chain-k called on the item's address. p holds
  * 1 + BM_CALIB_CHAIN points. Returns -1 if out of memory.
  */
-int bm_calib_pointer(const struct bm_pmu *pmu, const flw_corpus *c, flw_next_fn next, void *state,
-	const struct bm_calib_opts *o, struct bm_calib_point *p, struct bm_calib_fit *f,
-	struct bm_calib_risk *risk);
+int bm_calib_pointer(const struct bm_pmu *pmu, const flw_corpus *c, const struct bm_calib_opts *o,
+	struct bm_calib_point *p, struct bm_calib_fit *f, struct bm_calib_risk *risk);
 
 /* is per_call harness-bound against floor? throughput: on it; chained: below it */
 int bm_calib_bound(flw_mode mode, double per_call, double floor);

@@ -78,15 +78,13 @@ int bm_timer_measure(const struct bm_pmu *pmu, struct bm_timer *t, unsigned int 
  * A timed loop over a corpus: throughput (fn, independent iterations) or
  * chained. Chained runs chain word in/out when it is set: each corpus item,
  * read as its first 8 bytes, is made to depend on the previous output with
- * flw_chain_dep(). Otherwise it runs fn on next(previous output, item, state)
- * when next is set, else on the item's address made to depend on the
- * previous output the same way (the pointer dependency).
+ * flw_chain_dep(). Otherwise it runs fn on the item's address made to
+ * depend on the previous output the same way (the pointer dependency).
  */
 struct bm_job {
 	flw_mode mode;
 	flw_fn fn;
 	flw_chain_fn chain;
-	flw_next_fn next;
 	void *state;
 	const flw_corpus *corpus;
 };
@@ -94,12 +92,6 @@ struct bm_job {
 /* one batch of n iterations starting at corpus index base; d is end - start */
 void bm_job_run(const struct bm_pmu *pmu, const struct bm_job *job, size_t base, size_t n,
 	struct bm_mark *d);
-
-/*
- * Untimed: run n chained calls through the adapter (next must be set) and
- * count the distinct inputs next() produced. Returns -1 if out of memory.
- */
-long bm_job_distinct_inputs(const struct bm_job *job, size_t n);
 
 /* why a sample is rejected: bits of its flags */
 enum {

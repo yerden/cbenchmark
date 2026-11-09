@@ -13,7 +13,7 @@ Read `C Benchmark Package Implementation Guide.md` before any work. It is the so
 | `C Benchmark Package Implementation Guide.md` | framework developers | the design, record formats, implementation order (step list with acceptance criteria), pitfalls, decision log, open items with measured results |
 | `benchmarks/README.md` | benchmark authors | how to write, declare in Meson, build, run and read a benchmark; marks what is still planned |
 | `GLOSSARY.md` | everyone | every term in plain words, grouped by topic |
-| `scratchpad/README.md` | framework developers | test benchmarks (reference chains, collapse, planted slowdown) and analysis scripts from the acceptance checks, outside the build |
+| `scratchpad/README.md` | framework developers | test benchmarks (reference chains, pointer chains and a walk, planted slowdown) and analysis scripts from the acceptance checks, outside the build |
 
 Keep them in step with the code: when a change affects behaviour, flags or output, update the guide (and its decision log for a design choice), the README for anything a benchmark author sees, and the glossary for any new term. Use the glossary's terms in replies, and explain plainly.
 

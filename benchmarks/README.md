@@ -4,7 +4,7 @@ This guide is for people who write benchmarks with the framework. It covers how 
 
 A benchmark measures a small piece of code (a *snippet*: a hash, a parser step, a lookup) in core cycles per call. You supply the inputs and the snippet; the runner owns the clock, the CPU, the memory and the output.
 
-> **Status.** Throughput mode, chained mode (word in/out, pointer and adapters), `ops_per_call`, sample rejection, layout-randomized epochs and environment checks work. The report tools (`tools/bm-report`, `bm-go`, `bm-compare`) work too.
+> **Status.** Throughput mode, chained mode (pointer and word in/out), `ops_per_call`, sample rejection, layout-randomized epochs and environment checks work. The report tools (`tools/bm-report`, `bm-go`, `bm-compare`) work too.
 
 ## Quick start
 
@@ -138,8 +138,7 @@ A definition that breaks these rules stops the run with exit code 99 and a messa
 | --- | --- |
 | `name` | implementation name, the last part of `Name/mode/impl` |
 | `fn` | `uint64_t fn(const void *in, void *state)`. `in` points at one corpus item. Required in throughput mode |
-| `chain` | `uint64_t chain(uint64_t in, void *state)`: chained mode, word in/out. Needs `item_size >= 8` |
-| `next` | `const void *next(uint64_t out, const void *item, void *state)`: chained adapter for `fn`, only when `out` picks the next input. Usually NULL. See [Chained mode](#chained-mode) |
+| `chain` | `uint64_t chain(uint64_t in, void *state)`: chained mode, word in/out; takes over from `fn` in chained mode. Needs `item_size >= 8` |
 | `setup` | `void *setup(const flw_corpus *c, void *arg)`, called at the start of every epoch, returns `state`. `arg` is the benchmark's `gen_arg`. Returning NULL means failure |
 | `teardown` | `void teardown(void *state)`, called after the last batch. `free` works for a `malloc`ed state |
 | `ops_per_call` | R, operations per call; 0 means 1. See [Several operations per call](#several-operations-per-call) |
@@ -233,11 +232,18 @@ A `harness_bound` result says the snippet costs *at most* the floor, nothing mor
 
 ## Chained mode
 
-In chained mode every call's output feeds the next call's input, so calls cannot overlap and the result is **latency per call**. Use it for code on a dependency chain: a hash whose result picks the next bucket, a parser step whose output is the next offset.
+In chained mode every call waits for the result of the previous one, so calls cannot overlap and the result is **latency per call**. Use it for code on a dependency chain, where the next piece of work cannot start before this one ends.
 
-There are three shapes. Most benchmarks need no extra code: the first two cover them.
+The runner keeps feeding corpus items, as in throughput mode, and only makes each call wait: it combines the item with the previous result through a zero the CPU cannot see (`out & flw_zero()`), so the input stays the corpus item but its timing depends on the previous call. There are two shapes, and an implementation picks one with a field:
 
-**Pointer.** An implementation with only `.fn`, the same function as in throughput mode, runs chained as it is:
+| Field | Snippet gets | Use for | Load from the item |
+| --- | --- | --- | --- |
+| `fn` | the item's address | snippets that read a buffer (CRC, parser, copy) | on the chain, counts in the result |
+| `chain` | the item's first 8 bytes | kernels on a number (hash finalizer, arithmetic) | done by the runner, off the chain |
+
+In chained mode `chain` runs when it is set, else `fn`; throughput mode always runs `fn`.
+
+**Pointer (`fn`).** An implementation with only `.fn`, the same function as in throughput mode, runs chained as it is:
 
 ```c
 static const flw_impl crc_impls[] = {
@@ -245,9 +251,9 @@ static const flw_impl crc_impls[] = {
 };
 ```
 
-The runner passes `fn` the corpus item's address made to depend on the previous result (`item | (out & flw_zero())`, the **pointer dependency**). `out & flw_zero()` is 0, but the CPU cannot know that, so the next call waits for the previous one; the snippet still reads the corpus item. `fn` must return a value computed from what it read, or the next call does not wait (see the memcpy pitfall above).
+The runner passes `fn` the corpus item's address made to depend on the previous result (the **pointer dependency**). `fn` must return a value computed from what it read, or the next call does not wait (see the memcpy pitfall above).
 
-**Word in, word out.** Set `.chain`:
+**Word in, word out (`chain`).** Set `.chain`:
 
 ```c
 static uint64_t
@@ -262,41 +268,40 @@ static const flw_impl impls[] = {
 };
 ```
 
-The runner reads the first 8 bytes of each corpus item, makes it depend on the previous output with `flw_chain_dep()` (the value stays the corpus item; only the timing depends on the previous call), and passes it in. Most hashes and arithmetic kernels fit this. The corpus items must be at least 8 bytes. With both `.fn` and `.chain` set, chained mode uses `.chain`.
+The runner reads the first 8 bytes of each corpus item, makes it depend on the previous output with `flw_chain_dep()`, and passes it in. The corpus items must be at least 8 bytes. The load happens before the chain, so a cheap kernel is measured without it: 4 `imul` read 12.3 cycles as `chain` and 17.1 as `fn` on Kaby Lake. Add `.fn` too if the implementation should also run in throughput mode.
 
-**Adapter.** Only when the previous result really picks the next input: a table walk, a parser whose next token starts where the last one ended. Set `.fn` and `.next`. The runner calls `out = fn(next(out, item, state), state)`: `next` turns the previous output, the current corpus item and the implementation's state into the pointer `fn` reads. A table walk with its table in `state`:
+**When the result picks the next input.** A table walk, or a parser whose next token starts where the last one ended, needs each result to choose the next input. The runner does not do that; walk inside one call instead. Take the corpus word as the starting point, walk R steps through a table in `state`, and declare R (see [Several operations per call](#several-operations-per-call)). `setup` receives the corpus, so the table can be the corpus itself:
 
 ```c
-static const void *
-walk_next(uint64_t out, const void *item, void *state)
+struct walk {
+	const uint64_t *items;
+	size_t mask;
+};
+
+static uint64_t
+walk_8(uint64_t in, void *state)
 {
 	const struct walk *w = state;
+	int i;
 
-	(void)item;
-	return &w->nodes[out & w->mask];
+	for (i = 0; i < 8; i++)
+		in = w->items[(in >> 32) & w->mask]; /* this item picks the next */
+	return in;
 }
 
 static const flw_impl impls[] = {
-	{.name = "walk", .fn = walk_step, .next = walk_next, .setup = walk_setup,
-	 .teardown = walk_teardown},
+	{.name = "walk", .chain = walk_8, .setup = walk_setup, .teardown = free,
+	 .ops_per_call = 8},
 };
 ```
 
-`next` must return a valid pointer for **any** `out`, must use `out` in what it returns, and must keep the inputs varied (see the collapse check below). A `next` that moves on through `state` without `out`, such as `&w->nodes[w->pos++]`, passes every check, yet no call waits for the previous one: the result is throughput under a chained name, and the runner cannot tell.
+Each call starts from a fresh corpus word, and the step to the next item counts in the result (measured: 7.2 cycles per step, an L1 load plus a shift and a mask). **Keep the walk varied**: if it falls into a short loop (always the same few items), the CPU learns it and the numbers are too good. The runner cannot see inside a call, so it does not check this.
 
-**Harness cost.** The runner subtracts the calibrated glue latency `a` (about 2 cycles on a recent Intel core) from chained results. Word in/out uses the startup calibration. The pointer dependency is calibrated once per run, before the first implementation that uses it (about 0.3 s, skipped when none does). Each adapter implementation is calibrated separately through its own `next` and `state` before its epochs (about 0.1 s), since `next` is part of the glue. The pointer is not read during these calibrations, so loads in your snippet stay in its result.
+**Harness cost.** The runner subtracts the calibrated glue latency `a` (about 2 cycles on a recent Intel core) from chained results. Word in/out uses the startup calibration. The pointer dependency is calibrated once per run, before the first implementation that uses it (about 0.3 s, skipped when none does). The pointer is not read during that calibration, so loads in your snippet stay in its result.
 
-**Floor.** Below a certain latency the harness hides the chain; the floor is about 8 cycles per call for word in/out and pointer on Kaby Lake (14 to 15 through an adapter, which adds a call to `next`). A raw result below the floor by more than 3% (plus half a cycle) is marked `harness_bound`, and its corrected value means nothing. Use `ops_per_call` to measure such snippets.
+**Floor.** Below a certain latency the harness hides the chain; the floor is about 8 cycles per call on Kaby Lake, for both shapes. A raw result below the floor by more than 3% (plus half a cycle) is marked `harness_bound`, and its corrected value means nothing. Use `ops_per_call` to measure such snippets.
 
 The rule differs from throughput mode on purpose. The throughput floor is what an empty snippet reads, so a result at it could be anything cheaper and is marked. The chained floor is the shortest calibration chain that still measures right, so a result at it is a real measurement; only below it does the harness hide the chain.
-
-**Collapse check.** Through an adapter, a chain can collapse: if `next` ends up returning the same few pointers, the snippet sees the same inputs over and over and the numbers are fake. Before timing, the runner makes 65,536 untimed calls through the adapter and counts the distinct pointers. Fewer than `min(count, 65536) / 16` fails the implementation:
-
-```
-warning: Chain/chained/collapse: chain collapses: next() gave 1 distinct inputs in 65536 calls, expected at least 64
-```
-
-Word in/out and pointer cannot collapse (their inputs are always the corpus items), so they are not checked.
 
 Chained and throughput results of the same code measure different things (latency against throughput). The mode is part of the name (`Crc32/chained/table`); never compare across modes.
 
@@ -447,7 +452,7 @@ The JSONL file has one record per line, in this order:
 | `timer` | cost of an empty timing window |
 | `calibration` (two or three) | harness cost and floors: chained (word in/out) and throughput; `pointer` when an implementation ran chained through the pointer dependency |
 | `selftest` | whether the counters measured the reference snippets correctly |
-| `bench` | one per implementation and mode: name, mode, batch size `iters`, `ops_per_call`, epochs, samples, corpus size, the harness cost `a` and `floor` that apply and where they come from (`calibration`: `startup`, `pointer` or `adapter`), `subtract`, `harness_bound`; for adapters also their own calibration (`adapter`) |
+| `bench` | one per implementation and mode: name, mode, batch size `iters`, `ops_per_call`, epochs, samples, corpus size, the harness cost `a` and `floor` that apply and where they come from (`calibration`: `startup` or `pointer`), `subtract`, `harness_bound` |
 | `sample` | one per batch, after its `bench` record: `epoch`, `batch`, `iters`, `tsc`, `cycles`, `instr`, `flags` |
 
 Samples are raw: cycles per call is `cycles / iters`. A sample whose `flags` is not 0 was rejected: 1 `ratio` (the core's frequency changed, or an interrupt took time), 2 `ctx` (the thread was switched out), 4 `migrate` (it moved to another CPU). Rejected samples stay in the file but are left out of results; the console line says `(x of y samples rejected)`, and more than 10% rejected gives a warning. Lots of `ratio` rejections usually mean the governor is not `performance` or turbo is on; see [Rejected samples and layout sensitivity](#rejected-samples-and-layout-sensitivity). Per op is `(per_call - a) / ops_per_call` when the `bench` record says `subtract`, else `per_call / ops_per_call`; work on per-call values first (medians, the floor) and divide last. Read `cycles` (core cycles) rather than `tsc` (reference ticks, which move with the CPU frequency). In TSC-only mode `cycles` and `instr` are absent.
@@ -553,5 +558,5 @@ To declare it for a new benchmark, copy the `regress-crc32` test and change the 
 - [ ] No warnings in the run, or you know why each one is there.
 - [ ] A result marked `harness_bound` is not reported as a measurement.
 - [ ] In chained mode, `fn` returns a value computed from what it read.
-- [ ] An adapter is there only because `out` picks the next input; it uses `out`, returns a valid pointer for any `out`, and keeps its inputs varied.
+- [ ] A walk inside one call (each result picks the next input) keeps its steps varied.
 - [ ] With `ops_per_call`, the R operations inside a call form a chain in chained mode.
