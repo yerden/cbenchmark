@@ -193,7 +193,7 @@ Terms used in this project, its guides and our discussions, in plain words. Grou
 
 **Headline.** The one number reported for a result: the median of the epoch medians.
 
-**Layout noise.** Small result changes caused by code or data landing at different memory addresses, not by the code itself. Code alignment flags and epochs reduce it.
+**Layout noise.** Small result changes caused by code or data landing at different memory addresses, not by the code itself. Code alignment flags and epochs reduce it. Epochs cannot vary the code itself. Its effect can be large: compiling the runner's code outside the timed window differently (other inlining, the same instructions inside the window) moved one result by 10%.
 
 **Layout-sensitive.** A result whose epochs disagree much more (over 3 times) than the batches inside each epoch: the memory placement changes its speed. `bm-report` marks it.
 
